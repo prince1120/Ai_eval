@@ -52,8 +52,10 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+.agents/
 *.swp
 *.swo
+
 
 # Media / Temporary storage
 uploads/

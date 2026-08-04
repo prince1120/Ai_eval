@@ -7,7 +7,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { DynamicResultsList } from "@/components/DynamicResultsList";
 import { exportSingleRunToCSV, exportSingleRunToJSON } from "@/lib/export-utils";
-import { ArrowLeft, Loader2, AlertCircle, Download, FileSpreadsheet, FileCode, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  Download,
+  FileSpreadsheet,
+  FileCode,
+  RefreshCw,
+  Printer,
+} from "lucide-react";
 
 const MAX_POLL_MS = 5 * 60 * 1000;
 
@@ -46,6 +55,20 @@ export default function AnalysisRunDetailPage() {
     enabled: !!run?.transcript_id,
   });
 
+  // Fetch template info for report metadata
+  const { data: templates = [] } = useQuery<any[]>({
+    queryKey: ["templates"],
+    queryFn: () => apiFetch("/templates"),
+    enabled: run?.status === "done",
+  });
+
+  const matchedTemplate = templates.find((t) => t.id === run?.template_id);
+  const templateName =
+    matchedTemplate?.name ||
+    run?.template_name ||
+    "Call Quality Scorecard";
+  const templateVersion = run?.template_version;
+
   const retryMutation = useMutation({
     mutationFn: () => {
       const payload: Record<string, string> = {};
@@ -69,6 +92,10 @@ export default function AnalysisRunDetailPage() {
       setRetryError(err instanceof Error ? err.message : "Failed to re-run analysis");
     },
   });
+
+  const handlePrint = () => {
+    window.print();
+  };
 
   if (isLoading) {
     return (
@@ -94,7 +121,7 @@ export default function AnalysisRunDetailPage() {
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
       {/* Navigation & Export Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 print:hidden">
         <Link
           href={`/transcripts/${run.transcript_id}`}
           className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors"
@@ -103,18 +130,27 @@ export default function AnalysisRunDetailPage() {
         </Link>
 
         {run.status === "done" && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-slate-500 flex items-center gap-1 mr-1">
-              <Download className="h-3.5 w-3.5" /> Download Report:
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Print / PDF */}
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-indigo-400 hover:text-indigo-700 transition-all shadow-xs"
+              title="Print or Save as PDF"
+            >
+              <Printer className="h-3.5 w-3.5 text-indigo-600" /> Print / PDF
+            </button>
+
+            <span className="text-xs font-bold text-slate-500 flex items-center gap-1 ml-1">
+              <Download className="h-3.5 w-3.5" /> Download:
             </span>
             <button
-              onClick={() => exportSingleRunToCSV(run, transcript)}
+              onClick={() => exportSingleRunToCSV(run, transcript, { templateName, templateVersion })}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-xs"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" /> CSV Excel
             </button>
             <button
-              onClick={() => exportSingleRunToJSON(run, transcript)}
+              onClick={() => exportSingleRunToJSON(run, transcript, { templateName, templateVersion })}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-xs"
             >
               <FileCode className="h-3.5 w-3.5 text-indigo-600" /> JSON Data
@@ -123,7 +159,7 @@ export default function AnalysisRunDetailPage() {
         )}
       </div>
 
-      {/* Processing State Indicator */}
+      {/* Processing State */}
       {(run.status === "pending" || run.status === "processing") && (
         <div className="rounded-2xl border border-teal-200 bg-teal-50/50 p-8 text-center space-y-4">
           <Loader2 className="mx-auto h-10 w-10 text-teal-600 animate-spin" />
@@ -136,7 +172,7 @@ export default function AnalysisRunDetailPage() {
         </div>
       )}
 
-      {/* Failure State Indicator */}
+      {/* Failure State */}
       {run.status === "failed" && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-8 text-center space-y-4">
           <AlertCircle className="mx-auto h-10 w-10 text-rose-600" />
@@ -160,15 +196,20 @@ export default function AnalysisRunDetailPage() {
         </div>
       )}
 
-      {/* Completed Results View */}
+      {/* Completed Results — Full Professional Report */}
       {run.status === "done" && (
         <DynamicResultsList
           overallScore={run.overall_score}
           parameterResults={run.parameter_results || []}
           sectionResults={run.section_results || []}
           llmModelUsed={run.llm_model_used}
-          tokenUsage={run.token_usage}
+          templateName={templateName}
+          templateVersion={templateVersion}
+          callReference={transcript?.source_call_id || undefined}
+          evaluatedAt={run.completed_at || run.created_at}
           creator={run.creator}
+          tokenUsage={run.token_usage}
+          transcript={transcript}
         />
       )}
     </div>

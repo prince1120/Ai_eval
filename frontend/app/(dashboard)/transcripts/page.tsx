@@ -40,6 +40,7 @@ export default function TranscriptsPage() {
   const [sourceCallId, setSourceCallId] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [autoAnalyze, setAutoAnalyze] = useState(true);
+  const [selectedUploadTemplateId, setSelectedUploadTemplateId] = useState<string>("");
   const [transcriptToDelete, setTranscriptToDelete] = useState<any | null>(null);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -64,6 +65,13 @@ export default function TranscriptsPage() {
     queryFn: () => apiFetch("/analysis-runs"),
   });
 
+  const { data: templates = [] } = useQuery<any[]>({
+    queryKey: ["templates"],
+    queryFn: () => apiFetch("/templates"),
+  });
+
+  const activeTemplate = templates.find((t) => t.is_active) || templates[0];
+
   const uploadTextMutation = useMutation({
     mutationFn: (data: any) =>
       apiFetch("/transcripts", {
@@ -86,6 +94,9 @@ export default function TranscriptsPage() {
       const filesToProcess = selectedFiles.slice(0, 5);
       let lastCreatedTranscript: any = null;
 
+      // Determine which template ID to use
+      const templateIdToUse = selectedUploadTemplateId || activeTemplate?.id || "";
+
       for (let i = 0; i < filesToProcess.length; i++) {
         const file = filesToProcess[i];
         setCurrentFileProcessingName(file.name);
@@ -101,6 +112,9 @@ export default function TranscriptsPage() {
 
         const formData = new FormData();
         formData.append("file", file);
+        if (templateIdToUse) {
+          formData.append("template_id", templateIdToUse);
+        }
 
         try {
           lastCreatedTranscript = await apiFetch(
@@ -176,6 +190,7 @@ export default function TranscriptsPage() {
     setRawText("");
     setSourceCallId("");
     setSelectedFiles([]);
+    setSelectedUploadTemplateId("");
     setCurrentProcessingStep(0);
     setCurrentFileProcessingName("");
     setUploadError("");
@@ -529,7 +544,7 @@ export default function TranscriptsPage() {
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center">
                     <Mic className="mx-auto h-8 w-8 text-teal-600 mb-2" />
                     <p className="text-xs font-bold text-slate-900">
-                      Select audio call files (.mp3, .wav, .m4a)
+                      Select audio call files (.mp3, .wav, .m4a, .ogg, .flac)
                     </p>
                     <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
                       Automatic Speech-to-Text transcription & quality evaluation
@@ -561,6 +576,38 @@ export default function TranscriptsPage() {
                     )}
                   </div>
 
+                  {/* Scorecard Template Selector */}
+                  {templates.length > 0 && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2">
+                      <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Evaluation Scorecard</p>
+                      {templates.length === 1 ? (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 border border-teal-200 px-2 py-0.5 text-[10px] font-bold text-teal-700">
+                            ★ Active
+                          </span>
+                          <span className="font-semibold text-slate-900">{activeTemplate?.name}</span>
+                          {activeTemplate?.version && (
+                            <span className="text-slate-400 font-mono text-[10px]">v{activeTemplate.version}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <select
+                            value={selectedUploadTemplateId || activeTemplate?.id || ""}
+                            onChange={(e) => setSelectedUploadTemplateId(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 focus:border-teal-500 focus:outline-none appearance-none cursor-pointer"
+                          >
+                            {templates.map((tpl) => (
+                              <option key={tpl.id} value={tpl.id}>
+                                {tpl.name} (v{tpl.version}){tpl.is_active ? " ★ Default" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2 text-xs text-slate-900">
                     <input
                       type="checkbox"
@@ -570,7 +617,7 @@ export default function TranscriptsPage() {
                       className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                     />
                     <label htmlFor="autoAnalyze" className="cursor-pointer font-semibold">
-                      Automatically trigger AI scorecard evaluation after transcription
+                      Automatically run AI scorecard evaluation after transcription
                     </label>
                   </div>
                 </div>

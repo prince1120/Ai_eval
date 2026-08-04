@@ -58,3 +58,60 @@ h1, h2, h3, h4, h5, h6 {
 ::-webkit-scrollbar-thumb:hover {
   background: #0d9488;
 }
+
+/* ── Print / PDF Styles ────────────────────────────────────── */
+@media print {
+  /* Hide everything except the report */
+  body > *:not(#__next) { display: none !important; }
+
+  /* Hide nav, sidebars, modals, action bars */
+  nav,
+  aside,
+  header,
+  footer,
+  [data-radix-portal],
+  .print\:hidden {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: #0f172a;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  /* Report content fills the page */
+  .report-content {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Remove shadows and decorative rings in print */
+  .report-content * {
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Keep page breaks clean */
+  .print\:break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Gradient accent bar — keep color */
+  .bg-gradient-to-r {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Full-page layout */
+  @page {
+    size: A4 portrait;
+    margin: 16mm 14mm;
+  }
+}
