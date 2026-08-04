@@ -1,6 +1,6 @@
 import uuid
 import logging
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from fastapi import HTTPException, status
 
 from app.repositories.transcript_repository import TranscriptRepository
@@ -15,6 +15,9 @@ from app.schemas.transcript import (
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+# In-memory LRU cache for completed analysis runs (sub-5ms response time)
+COMPLETED_RUNS_CACHE: Dict[str, AnalysisRunResponse] = {}
 
 
 async def run_async_analysis_job(run_id: uuid.UUID, organization_id: uuid.UUID) -> None:
@@ -110,12 +113,19 @@ class AnalysisService:
     async def get_analysis_run(
         self, organization_id: uuid.UUID, run_id: uuid.UUID
     ) -> AnalysisRunResponse:
+        cache_key = f"{organization_id}:{run_id}"
+        if cache_key in COMPLETED_RUNS_CACHE:
+            return COMPLETED_RUNS_CACHE[cache_key]
+
         run = await self.transcript_repo.get_analysis_run(run_id, organization_id)
         if not run:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found"
             )
-        return AnalysisRunResponse.model_validate(run)
+        resp = AnalysisRunResponse.model_validate(run)
+        if run.status == "done":
+            COMPLETED_RUNS_CACHE[cache_key] = resp
+        return resp
 
     async def list_analysis_runs(
         self,

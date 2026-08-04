@@ -36,6 +36,7 @@ interface DynamicParameterFormProps {
     sections: SectionFormItem[];
   }) => Promise<void>;
   isSaving?: boolean;
+  onFormChange?: () => void;
 }
 
 export function DynamicParameterForm({
@@ -45,6 +46,7 @@ export function DynamicParameterForm({
   templateDescription: initDesc = "",
   onSubmit,
   isSaving = false,
+  onFormChange,
 }: DynamicParameterFormProps) {
   const [name, setName] = useState(initName);
   const [description, setDescription] = useState(initDesc);

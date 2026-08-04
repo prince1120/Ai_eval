@@ -2,13 +2,16 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Modal } from "@/components/Modal";
-import { Sliders, Plus, CheckCircle2, Edit3, Trash2, Layers, AlertTriangle, Star, Eye, Sparkles, Award } from "lucide-react";
+import { TemplatesSkeleton } from "@/components/TemplatesSkeleton";
+import { Sliders, Plus, CheckCircle2, Edit3, Trash2, Layers, AlertTriangle, Star, Eye, Sparkles, Award, Loader2 } from "lucide-react";
 
 export default function TemplatesPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -57,7 +60,7 @@ export default function TemplatesPage() {
       }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["templates"] });
-      window.location.href = `/templates/${data.id}/edit`;
+      router.push(`/templates/${data.id}/edit`);
     },
   });
 
@@ -69,7 +72,7 @@ export default function TemplatesPage() {
     onSuccess: (data: any) => {
       setSeedError("");
       queryClient.invalidateQueries({ queryKey: ["templates"] });
-      window.location.href = `/templates/${data.id}/edit`;
+      router.push(`/templates/${data.id}/edit`);
     },
     onError: (err: any) => {
       setSeedError(err.message || "Failed to seed BPO QA Master Template");
@@ -123,18 +126,28 @@ export default function TemplatesPage() {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
             <button
               onClick={() => seedBpoPresetMutation.mutate()}
-              disabled={seedBpoPresetMutation.isPending}
-              className="flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-xs font-bold text-teal-800 shadow-xs hover:bg-teal-100 transition-all w-full sm:w-auto"
+              disabled={seedBpoPresetMutation.isPending || createBlankTemplateMutation.isPending}
+              className="flex items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-xs font-bold text-teal-800 shadow-xs hover:bg-teal-100 transition-all disabled:opacity-50 w-full sm:w-auto"
             >
-              <Award className="h-4 w-4 text-teal-600" /> Load BPO 59-Param QA Framework
+              {seedBpoPresetMutation.isPending ? (
+                <Loader2 className="h-4 w-4 text-teal-600 animate-spin" />
+              ) : (
+                <Award className="h-4 w-4 text-teal-600" />
+              )}
+              {seedBpoPresetMutation.isPending ? "Loading BPO Framework..." : "Load BPO 59-Param QA Framework"}
             </button>
 
             <button
               onClick={() => createBlankTemplateMutation.mutate()}
-              disabled={createBlankTemplateMutation.isPending}
-              className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4.5 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-slate-800 transition-all w-full sm:w-auto"
+              disabled={createBlankTemplateMutation.isPending || seedBpoPresetMutation.isPending}
+              className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4.5 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-slate-800 transition-all disabled:opacity-50 w-full sm:w-auto"
             >
-              <Plus className="h-4 w-4" /> Create Custom Template
+              {createBlankTemplateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 text-white animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {createBlankTemplateMutation.isPending ? "Creating Template..." : "Create Custom Template"}
             </button>
           </div>
         )}
@@ -148,11 +161,7 @@ export default function TemplatesPage() {
 
       {/* Templates Grid */}
       {isLoading ? (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-48 rounded-2xl bg-white animate-pulse border border-slate-200" />
-          ))}
-        </div>
+        <TemplatesSkeleton />
       ) : templates.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-xs space-y-4">
           <Award className="mx-auto h-12 w-12 text-teal-500 mb-2" />

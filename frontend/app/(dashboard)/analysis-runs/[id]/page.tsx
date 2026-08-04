@@ -7,6 +7,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { DynamicResultsList } from "@/components/DynamicResultsList";
 import { AudioPlayer } from "@/components/AudioPlayer";
+import { ReportSkeleton } from "@/components/ReportSkeleton";
+import { AIProgressStepper } from "@/components/AIProgressStepper";
+import { useToast } from "@/components/Toast";
 import { exportSingleRunToCSV, exportSingleRunToJSON } from "@/lib/export-utils";
 import {
   ArrowLeft,
@@ -94,18 +97,25 @@ export default function AnalysisRunDetailPage() {
       setRetryError(err instanceof Error ? err.message : "Failed to re-run analysis");
     },
   });
+  const { showToast } = useToast();
 
   const handlePrint = () => {
+    showToast("Opening print/PDF preview...", "info");
     window.print();
   };
 
+  const handleExportCSV = () => {
+    exportSingleRunToCSV(run, transcript, { templateName, templateVersion });
+    showToast("Downloaded report as CSV Excel spreadsheet!", "success");
+  };
+
+  const handleExportJSON = () => {
+    exportSingleRunToJSON(run, transcript, { templateName, templateVersion });
+    showToast("Downloaded full report dataset as JSON!", "success");
+  };
+
   if (isLoading) {
-    return (
-      <div className="mx-auto max-w-6xl px-6 py-12 flex flex-col items-center justify-center space-y-4">
-        <Loader2 className="h-10 w-10 text-teal-600 animate-spin" />
-        <p className="text-sm font-semibold text-slate-500">Loading analysis run...</p>
-      </div>
-    );
+    return <ReportSkeleton />;
   }
 
   if (error || !run) {
@@ -121,7 +131,7 @@ export default function AnalysisRunDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
+    <div className="mx-auto max-w-6xl px-6 py-8 space-y-6 animate-in fade-in duration-300">
       {/* Navigation & Export Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 print:hidden">
         <Link
@@ -132,7 +142,7 @@ export default function AnalysisRunDetailPage() {
         </Link>
 
         {run.status === "done" && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             {/* View Transcript Jump Button */}
             <button
               onClick={() => {
@@ -141,7 +151,7 @@ export default function AnalysisRunDetailPage() {
                   el.scrollIntoView({ behavior: "smooth", block: "start" });
                 }
               }}
-              className="flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100 transition-all shadow-xs"
+              className="flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100 transition-all shadow-2xs"
               title="Jump to Call Transcript"
             >
               <FileText className="h-3.5 w-3.5 text-teal-600" /> View Transcript
@@ -150,24 +160,21 @@ export default function AnalysisRunDetailPage() {
             {/* Print / PDF */}
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-indigo-400 hover:text-indigo-700 transition-all shadow-xs"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:border-indigo-400 hover:text-indigo-700 transition-all shadow-2xs"
               title="Print or Save as PDF"
             >
               <Printer className="h-3.5 w-3.5 text-indigo-600" /> Print / PDF
             </button>
 
-            <span className="text-xs font-bold text-slate-500 flex items-center gap-1 ml-1">
-              <Download className="h-3.5 w-3.5" /> Download:
-            </span>
             <button
-              onClick={() => exportSingleRunToCSV(run, transcript, { templateName, templateVersion })}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-xs"
+              onClick={handleExportCSV}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-2xs"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" /> CSV Excel
             </button>
             <button
-              onClick={() => exportSingleRunToJSON(run, transcript, { templateName, templateVersion })}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-xs"
+              onClick={handleExportJSON}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600 transition-all shadow-2xs"
             >
               <FileCode className="h-3.5 w-3.5 text-indigo-600" /> JSON Data
             </button>
@@ -175,17 +182,10 @@ export default function AnalysisRunDetailPage() {
         )}
       </div>
 
-      {/* Processing State */}
+
+      {/* Processing State — Real-Time Step Progress Stepper */}
       {(run.status === "pending" || run.status === "processing") && (
-        <div className="rounded-2xl border border-teal-200 bg-teal-50/50 p-8 text-center space-y-4">
-          <Loader2 className="mx-auto h-10 w-10 text-teal-600 animate-spin" />
-          <h2 className="text-xl font-extrabold text-slate-900">AI Analysis in Progress</h2>
-          <p className="text-xs text-slate-600 max-w-md mx-auto">
-            {pollTimedOut
-              ? "Still processing — this is taking longer than expected. Refresh this page to check the latest status."
-              : "Evaluating transcript against selected scorecard parameters..."}
-          </p>
-        </div>
+        <AIProgressStepper status={run.status} />
       )}
 
       {/* Failure State */}

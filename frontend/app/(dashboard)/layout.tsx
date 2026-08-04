@@ -4,7 +4,7 @@ import React, { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Navbar } from "@/components/Navbar";
-import { Loader2 } from "lucide-react";
+import { ScrollToTop } from "@/components/ScrollToTop";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -19,11 +19,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-slate-50">
-        <div className="text-center space-y-3">
-          <Loader2 className="mx-auto h-9 w-9 text-teal-600 animate-spin" />
-          <p className="text-xs font-bold text-slate-500">Authenticating Scribe session...</p>
-        </div>
+      <div className="min-h-screen bg-slate-50 font-sans text-slate-900 antialiased">
+        <Navbar />
+        <main className="pb-20 sm:pb-12">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 animate-pulse space-y-6">
+            <div className="h-10 w-64 rounded-xl bg-slate-200" />
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-28 rounded-2xl bg-slate-200" />
+              ))}
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -36,6 +43,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 antialiased">
       <Navbar />
       <main className="pb-20 sm:pb-12">{children}</main>
+      <ScrollToTop />
     </div>
   );
 }
+

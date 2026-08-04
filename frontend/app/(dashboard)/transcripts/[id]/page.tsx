@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { formatToUserLocalTime } from "@/lib/date-utils";
+import { TranscriptDetailSkeleton } from "@/components/TranscriptDetailSkeleton";
 import {
   FileText,
   PlayCircle,
@@ -86,11 +87,7 @@ export default function TranscriptDetailPage() {
   });
 
   if (isLoading) {
-    return (
-      <div className="mx-auto max-w-5xl px-6 py-12">
-        <div className="h-64 rounded-2xl bg-white animate-pulse border border-slate-200" />
-      </div>
-    );
+    return <TranscriptDetailSkeleton />;
   }
 
   if (!transcript) {
@@ -291,13 +288,13 @@ export default function TranscriptDetailPage() {
         </div>
 
         {/* Template Selector & Trigger Button */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <div className="relative">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-auto">
             <Sliders className="absolute left-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
             <select
               value={selectedTemplateId || (activeTemplate?.id || "")}
               onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="w-full sm:w-64 rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 py-2.5 text-xs font-bold text-slate-800 appearance-none focus:border-teal-500 focus:outline-none cursor-pointer shadow-xs"
+              className="w-full sm:w-64 max-w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 py-2.5 text-xs font-bold text-slate-800 appearance-none focus:border-teal-500 focus:outline-none cursor-pointer shadow-xs truncate"
             >
               {templates.map((tpl) => (
                 <option key={tpl.id} value={tpl.id}>
@@ -311,7 +308,7 @@ export default function TranscriptDetailPage() {
           <button
             onClick={() => analyzeMutation.mutate(selectedTemplateId || activeTemplate?.id)}
             disabled={analyzeMutation.isPending}
-            className="flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 transition-all shrink-0"
+            className="flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 transition-all shrink-0 w-full sm:w-auto"
           >
             <PlayCircle className="h-4 w-4" />
             {analyzeMutation.isPending ? "Evaluating..." : "Run AI Evaluation"}
@@ -320,8 +317,8 @@ export default function TranscriptDetailPage() {
       </div>
 
       {/* Historical Analysis Runs Cards */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Clock className="h-4 w-4 text-indigo-600" /> Historical Evaluation Reports ({runs.length})
           </h2>
@@ -346,15 +343,15 @@ export default function TranscriptDetailPage() {
               return (
                 <div
                   key={r.id}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/80 p-4 hover:border-teal-400 hover:bg-white transition-all shadow-2xs"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 hover:border-teal-400 hover:bg-white transition-all shadow-2xs"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-xs text-slate-900">
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-xs text-slate-900 leading-snug">
                         {templateDisplayName}
                       </span>
                       <span
-                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize border ${
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize border ${
                           r.status === "done"
                             ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                             : r.status === "failed"
@@ -370,15 +367,15 @@ export default function TranscriptDetailPage() {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-5">
+                  <div className="flex items-center justify-between sm:justify-end gap-4 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200/60 shrink-0">
                     {r.overall_score !== null && (
-                      <span className="text-base font-black text-teal-600">
+                      <span className="text-sm sm:text-base font-black text-teal-600">
                         {r.overall_score.toFixed(1)}%
                       </span>
                     )}
                     <Link
                       href={`/analysis-runs/${r.id}`}
-                      className="flex items-center gap-1.5 rounded-lg bg-teal-50 border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-600 hover:text-white transition-all"
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-teal-50 border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-600 hover:text-white transition-all shrink-0"
                     >
                       View Scorecard <ArrowUpRight className="h-3.5 w-3.5" />
                     </Link>
@@ -389,6 +386,7 @@ export default function TranscriptDetailPage() {
           </div>
         )}
       </div>
+
 
       {/* Transcript Section with View Mode Switcher */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">

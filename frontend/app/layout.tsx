@@ -20,6 +20,8 @@ export const metadata: Metadata = {
   description: "Enterprise AI call transcription and scorecard evaluation platform by Scribe",
 };
 
+import { ToastProvider } from "@/components/Toast";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -30,7 +32,9 @@ export default function RootLayout({
       <body className="bg-slate-50 text-slate-900 min-h-screen font-sans antialiased selection:bg-teal-500 selection:text-white">
         <ReactQueryProvider>
           <AuthProvider>
-            {children}
+            <ToastProvider>
+              {children}
+            </ToastProvider>
           </AuthProvider>
         </ReactQueryProvider>
       </body>

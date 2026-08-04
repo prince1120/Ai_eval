@@ -34,24 +34,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
+    // Populate cached session on client mount to avoid SSR hydration mismatch
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("scribe_user");
+        if (cached) {
+          setUser(JSON.parse(cached));
+          setIsLoading(false);
+        }
+      } catch (e) {
+        // Ignore parse error
+      }
+    }
+
     apiFetch<User>("/auth/me")
       .then((userData) => {
         setUser(userData);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("scribe_user", JSON.stringify(userData));
+        }
       })
       .catch(() => {
         setUser(null);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("scribe_user");
+        }
       })
       .finally(() => setIsLoading(false));
   }, []);
 
   const login = (newUser: User, newOrg?: Organization | null) => {
     setUser(newUser);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("scribe_user", JSON.stringify(newUser));
+    }
     if (newOrg !== undefined) {
       setOrganization(newOrg);
     }
   };
 
   const logout = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("scribe_user");
+    }
     apiFetch("/auth/logout", { method: "POST" })
       .catch(() => {})
       .finally(() => {

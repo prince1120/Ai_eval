@@ -14,7 +14,7 @@ export default function ReactQueryProvider({
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 5 * 1000,
+            staleTime: 60 * 1000,
             refetchOnWindowFocus: false,
             retry: (failureCount, error) => {
               if (error instanceof ApiError && error.status < 500 && error.status !== 0) {

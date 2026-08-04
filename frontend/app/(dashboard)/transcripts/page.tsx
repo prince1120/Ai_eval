@@ -8,6 +8,8 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { exportBulkRunsToCSV } from "@/lib/export-utils";
 import { Modal } from "@/components/Modal";
+import { TranscriptsSkeleton } from "@/components/TranscriptsSkeleton";
+import { useToast } from "@/components/Toast";
 import {
   FileText,
   Plus,
@@ -25,12 +27,25 @@ import {
   CheckCircle2,
   Cpu,
   UserCheck,
+  LayoutGrid,
+  List,
+  Headphones,
+  Globe,
+  Clock,
+  Sparkles,
+  TrendingUp,
+  AlertCircle,
+  XCircle,
+  PhoneCall,
+  Calendar,
+  ChevronDown,
 } from "lucide-react";
 
 export default function TranscriptsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const canUpload = user?.role === "admin" || user?.role === "evaluator";
   const canDelete = user?.role === "admin";
 
@@ -46,6 +61,9 @@ export default function TranscriptsPage() {
   const [uploadError, setUploadError] = useState("");
   const [bulkDeleteResult, setBulkDeleteResult] = useState("");
 
+  // View Mode state (Grid vs Table)
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+
   // Real-time processing progress states
   const [currentProcessingStep, setCurrentProcessingStep] = useState<number>(0);
   const [currentFileProcessingName, setCurrentFileProcessingName] = useState<string>("");
@@ -53,7 +71,9 @@ export default function TranscriptsPage() {
   // Selection & Date Filtering State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [dateFilter, setDateFilter] = useState<"all" | "today" | "7days">("all");
+  const [dateFilter, setDateFilter] = useState<"all" | "today" | "yesterday" | "7days" | "30days" | "custom">("all");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
 
   const { data: transcripts = [], isLoading } = useQuery<any[]>({
     queryKey: ["transcripts"],
@@ -208,22 +228,37 @@ export default function TranscriptsPage() {
     if (!matchesSearch) return false;
 
     if (dateFilter === "today") {
-      const createdTime = new Date(t.created_at).getTime();
-      const now = new Date().getTime();
-      const diffHours = (now - createdTime) / (1000 * 60 * 60);
-
       const createdLocalDate = new Date(t.created_at).toLocaleDateString();
       const todayLocalDate = new Date().toLocaleDateString();
+      return createdLocalDate === todayLocalDate;
+    }
 
-      return diffHours <= 24 || createdLocalDate === todayLocalDate;
+    if (dateFilter === "yesterday") {
+      const createdLocalDate = new Date(t.created_at).toLocaleDateString();
+      const y = new Date();
+      y.setDate(y.getDate() - 1);
+      return createdLocalDate === y.toLocaleDateString();
     }
 
     if (dateFilter === "7days") {
       const createdTime = new Date(t.created_at).getTime();
       const now = new Date().getTime();
       const diffDays = (now - createdTime) / (1000 * 60 * 60 * 24);
-
       return diffDays <= 7;
+    }
+
+    if (dateFilter === "30days") {
+      const createdTime = new Date(t.created_at).getTime();
+      const now = new Date().getTime();
+      const diffDays = (now - createdTime) / (1000 * 60 * 60 * 24);
+      return diffDays <= 30;
+    }
+
+    if (dateFilter === "custom") {
+      const tTime = new Date(t.created_at).getTime();
+      const startMs = customStartDate ? new Date(`${customStartDate}T00:00:00`).getTime() : 0;
+      const endMs = customEndDate ? new Date(`${customEndDate}T23:59:59`).getTime() : Infinity;
+      return tTime >= startMs && tTime <= endMs;
     }
 
     return true;
@@ -256,6 +291,23 @@ export default function TranscriptsPage() {
     const targetRuns = runs.filter((r) => targetTranscriptIds.includes(r.transcript_id));
     exportBulkRunsToCSV(targetRuns.length > 0 ? targetRuns : runs, transcriptsMap);
   };
+
+  // Computed KPI statistics
+  const totalAudioCalls = transcripts.filter((t) => t.audio_file_key || t.audio_duration_seconds).length;
+  const completedRunsCount = runs.filter((r) => r.status === "done").length;
+  const doneRuns = runs.filter((r) => r.status === "done" && typeof r.overall_score === "number");
+  const avgOverallScore =
+    doneRuns.length > 0
+      ? Math.round(doneRuns.reduce((acc: number, curr: any) => acc + curr.overall_score, 0) / doneRuns.length)
+      : null;
+
+  const uniqueLanguagesSet = new Set<string>();
+  transcripts.forEach((t) => {
+    if (t.detected_language) {
+      t.detected_language.split(",").forEach((l: string) => uniqueLanguagesSet.add(l.trim()));
+    }
+  });
+  const languagesList = Array.from(uniqueLanguagesSet);
 
   return (
     <div className="page-transition mx-auto max-w-7xl px-4 sm:px-6 py-8 space-y-8">
@@ -332,10 +384,10 @@ export default function TranscriptsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Call Transcripts & Reports
+            Call Transcripts & Quality Reports
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-slate-500">
-            Upload audio call files or paste text transcripts to view scores and download detailed reports
+            Enterprise call recording intelligence, multi-language STT, and AI scorecard analytics
           </p>
         </div>
 
@@ -354,9 +406,9 @@ export default function TranscriptsPage() {
           {canUpload && (
             <button
               onClick={() => setIsModalOpen(true)}
-              className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4.5 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-slate-800 transition-all w-full sm:w-auto"
+              className="flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4.5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-teal-700 transition-all w-full sm:w-auto"
             >
-              <Plus className="h-4 w-4" /> Upload Audio / Text
+              <Plus className="h-4 w-4" /> Upload Call Audio / Text
             </button>
           )}
         </div>
@@ -408,31 +460,79 @@ export default function TranscriptsPage() {
             />
           </div>
 
-          {/* Date Filter Tabs */}
+          {/* Date & Time Range Filter */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Calendar className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+              <select
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value as any)}
+                className="rounded-xl border border-slate-200 bg-slate-100 pl-8 pr-8 py-1.5 text-xs font-bold text-slate-800 appearance-none focus:border-teal-500 focus:outline-none cursor-pointer shadow-2xs"
+              >
+                <option value="all">All Time</option>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="7days">Last 7 Days</option>
+                <option value="30days">Last 30 Days</option>
+                <option value="custom">Custom Date Range...</option>
+              </select>
+              <ChevronDown className="absolute right-2.5 top-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+            </div>
+
+
+            {/* Custom Date Inputs when Custom is selected */}
+            {dateFilter === "custom" && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs animate-in fade-in duration-200">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-800 focus:border-teal-500 focus:outline-none"
+                />
+                <span className="text-slate-400 font-bold">to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-800 focus:border-teal-500 focus:outline-none"
+                />
+                {(customStartDate || customEndDate) && (
+                  <button
+                    onClick={() => {
+                      setCustomStartDate("");
+                      setCustomEndDate("");
+                    }}
+                    className="text-slate-400 hover:text-rose-600 p-1"
+                    title="Clear custom date range"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+
+
+          {/* View Mode Switcher */}
           <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200 text-xs">
             <button
-              onClick={() => setDateFilter("all")}
-              className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                dateFilter === "all" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+              onClick={() => setViewMode("grid")}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === "grid" ? "bg-white text-teal-700 shadow-2xs" : "text-slate-500 hover:text-slate-900"
               }`}
+              title="Grid Cards View"
             >
-              All Dates
+              <LayoutGrid className="h-4 w-4" />
             </button>
             <button
-              onClick={() => setDateFilter("today")}
-              className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                dateFilter === "today" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+              onClick={() => setViewMode("table")}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === "table" ? "bg-white text-teal-700 shadow-2xs" : "text-slate-500 hover:text-slate-900"
               }`}
+              title="Compact Table View"
             >
-              Today
-            </button>
-            <button
-              onClick={() => setDateFilter("7days")}
-              className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                dateFilter === "7days" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Last 7 Days
+              <List className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -690,55 +790,69 @@ export default function TranscriptsPage() {
         </div>
       </Modal>
 
-      {/* Transcripts Grid */}
+      {/* ── TRANSCRIPTS LIST / GRID ─────────────────────────────────── */}
       {isLoading ? (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-44 rounded-2xl bg-white animate-pulse border border-slate-200" />
-          ))}
-        </div>
+        <TranscriptsSkeleton />
       ) : filteredTranscripts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-xs">
-          <FileText className="mx-auto h-12 w-12 text-slate-400" />
-          <h3 className="mt-4 text-base font-bold text-slate-900">No Transcripts Found</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Upload audio call files or paste raw text transcript to analyze performance.
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-xs space-y-4">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-teal-50 text-teal-600 border border-teal-100">
+            <FileText className="h-8 w-8" />
+          </div>
+          <h3 className="text-base font-extrabold text-slate-900">No Transcripts Found</h3>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            Upload audio call files or paste raw text transcripts to analyze call performance and compliance scores.
           </p>
           {canUpload && (
             <button
               onClick={() => setIsModalOpen(true)}
-              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white font-bold px-4 py-2.5 text-xs shadow-xs hover:bg-slate-800"
+              className="inline-flex items-center gap-2 rounded-xl bg-teal-600 text-white font-bold px-5 py-2.5 text-xs shadow-md hover:bg-teal-700 transition-all"
             >
-              <Plus className="h-4 w-4" /> Upload Audio / Text
+              <Plus className="h-4 w-4" /> Upload Call Audio / Text
             </button>
           )}
         </div>
-      ) : (
+      ) : viewMode === "grid" ? (
+        /* ── RICH GRID CARDS VIEW ──────────────────────────────────── */
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {filteredTranscripts.map((t) => {
             const isSelected = selectedIds.includes(t.id);
             const transcriptRuns = runs.filter((r) => r.transcript_id === t.id);
+            const latestRun = transcriptRuns[transcriptRuns.length - 1];
+            const hasAudio = !!(t.audio_file_key || t.audio_duration_seconds);
+
+            // Format audio duration
+            const formatDuration = (sec?: number) => {
+              if (!sec) return null;
+              const m = Math.floor(sec / 60);
+              const s = Math.floor(sec % 60);
+              return `${m}:${s < 10 ? "0" : ""}${s}`;
+            };
+
+            const langList = t.detected_language
+              ? t.detected_language.split(",").map((l: string) => l.trim())
+              : [];
 
             return (
               <div
                 key={t.id}
                 onClick={() => router.push(`/transcripts/${t.id}`)}
-                className={`flex flex-col justify-between rounded-2xl border p-6 transition-all cursor-pointer shadow-xs ${
+                className={`group relative flex flex-col justify-between rounded-3xl border p-4 sm:p-6 transition-all cursor-pointer shadow-xs hover:shadow-xl ${
                   isSelected
-                    ? "border-teal-500 bg-teal-50/30 ring-2 ring-teal-500/20"
-                    : "border-slate-200 bg-white hover:border-teal-400 hover:shadow-md"
+                    ? "border-teal-500 bg-teal-50/20 ring-2 ring-teal-500/30"
+                    : "border-slate-200 bg-white hover:border-teal-400"
                 }`}
               >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                <div className="space-y-4">
+                  {/* Top Card Header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleSelect(t.id);
                         }}
-                        className="p-1 rounded-md hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-900"
+                        className="p-1 rounded-md hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-900 shrink-0"
                         title={isSelected ? "Deselect transcript" : "Select transcript"}
                       >
                         {isSelected ? (
@@ -748,56 +862,226 @@ export default function TranscriptsPage() {
                         )}
                       </button>
 
-                      <span className="font-mono text-xs font-bold text-teal-600 truncate max-w-[150px]">
-                        {t.source_call_id || `ID: ${t.id.substring(0, 8)}`}
-                      </span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <PhoneCall className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+                        <span className="font-mono text-xs font-bold text-slate-900 truncate max-w-[140px] sm:max-w-none">
+                          {t.source_call_id || `CALL-${t.id.substring(0, 8).toUpperCase()}`}
+                        </span>
+                      </div>
                     </div>
 
-                    <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 capitalize">
-                      {transcriptRuns.length} Runs
-                    </span>
+                    {/* Latest Score Badge */}
+                    {latestRun && latestRun.status === "done" && typeof latestRun.overall_score === "number" ? (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold shadow-2xs shrink-0 ${
+                          latestRun.overall_score >= 80
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            : latestRun.overall_score >= 60
+                            ? "bg-amber-100 text-amber-800 border border-amber-300"
+                            : "bg-rose-100 text-rose-800 border border-rose-300"
+                        }`}
+                      >
+                        {latestRun.overall_score >= 80 ? (
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="h-3 w-3 text-amber-600" />
+                        )}
+                        {Math.round(latestRun.overall_score * 10) / 10}%
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                        {transcriptRuns.length > 0 ? `${transcriptRuns.length} Runs` : "New Call"}
+                      </span>
+                    )}
                   </div>
 
-                  {/* Evaluator Attribution Badge */}
-                  {t.creator && (
-                    <div className="mt-2.5 flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-md w-fit">
-                      <UserCheck className="h-3 w-3 text-indigo-600" />
-                      Evaluated by: {t.creator.full_name || t.creator.email.split("@")[0]}
-                    </div>
-                  )}
+                  {/* Audio & Language Badges Row */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {hasAudio ? (
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-teal-50 border border-teal-200 px-2 py-0.5 sm:px-2.5 sm:py-1 text-[10px] sm:text-[11px] font-bold text-teal-800">
+                        <Mic className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-teal-600" /> Audio
+                        {formatDuration(t.audio_duration_seconds) && (
+                          <span className="font-mono text-[9px] sm:text-[10px] text-teal-700">
+                            ({formatDuration(t.audio_duration_seconds)})
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                        <FileText className="h-3 w-3 text-slate-400" /> Text Input
+                      </span>
+                    )}
 
-                  <p className="mt-3 text-xs text-slate-900 line-clamp-3 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200 font-mono">
-                    {t.raw_text}
-                  </p>
+                    {/* Language Badges */}
+                    {langList.map((lang: string, idx: number) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 border border-indigo-200 px-2 py-0.5 sm:px-2 sm:py-1 text-[10px] font-bold text-indigo-800"
+                      >
+                        <Globe className="h-3 w-3 text-indigo-600" /> {lang}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Dialogue Snippet Preview Box */}
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3 space-y-1 group-hover:bg-teal-50/20 group-hover:border-teal-100 transition-colors">
+                    <p className="text-xs text-slate-700 line-clamp-3 leading-relaxed font-medium break-words">
+                      &quot;{t.raw_text}&quot;
+                    </p>
+                  </div>
                 </div>
 
-                {/* Action Toolbar */}
+                {/* Footer Meta & Actions */}
                 <div
-                  className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4"
+                  className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {canDelete ? (
-                    <button
-                      onClick={() => setTranscriptToDelete(t)}
-                      className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-rose-600 transition-colors"
-                      title="Delete Transcript"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </button>
-                  ) : (
-                    <div />
-                  )}
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500">
+                      <Calendar className="h-3 w-3 text-slate-400 shrink-0" />
+                      {new Date(t.created_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </div>
+                    {t.creator && (
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-700 truncate max-w-[100px]">
+                        <UserCheck className="h-3 w-3 text-indigo-600 shrink-0" />
+                        {t.creator.full_name || t.creator.email.split("@")[0]}
+                      </div>
+                    )}
+                  </div>
 
-                  <Link
-                    href={`/transcripts/${t.id}`}
-                    className="flex items-center gap-1.5 rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-1.5 text-xs font-bold text-slate-900 hover:border-teal-500 hover:text-teal-600 hover:bg-teal-50 transition-all"
-                  >
-                    View Details <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {canDelete && (
+                      <button
+                        onClick={() => setTranscriptToDelete(t)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        title="Delete Transcript"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+
+                    <Link
+                      href={`/transcripts/${t.id}`}
+                      className="flex items-center gap-1 rounded-xl bg-white border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-900 shadow-2xs hover:border-teal-500 hover:text-teal-600 hover:bg-teal-50 transition-all shrink-0"
+                    >
+                      View Report <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
                 </div>
               </div>
             );
           })}
+        </div>
+      ) : (
+        /* ── COMPACT TABLE VIEW ────────────────────────────────────── */
+        <div className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="p-4 w-10">Select</th>
+                  <th className="p-4">Call Reference ID</th>
+                  <th className="p-4">Type & Languages</th>
+                  <th className="p-4">Latest Score</th>
+                  <th className="p-4">Runs</th>
+                  <th className="p-4">Uploaded Date</th>
+                  <th className="p-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredTranscripts.map((t) => {
+                  const isSelected = selectedIds.includes(t.id);
+                  const transcriptRuns = runs.filter((r) => r.transcript_id === t.id);
+                  const latestRun = transcriptRuns[transcriptRuns.length - 1];
+
+                  return (
+                    <tr
+                      key={t.id}
+                      onClick={() => router.push(`/transcripts/${t.id}`)}
+                      className={`cursor-pointer hover:bg-teal-50/30 transition-colors ${
+                        isSelected ? "bg-teal-50/20" : ""
+                      }`}
+                    >
+                      <td className="p-4" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(t.id)}
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-900"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="h-4 w-4 text-teal-600" />
+                          ) : (
+                            <Square className="h-4 w-4 text-slate-300" />
+                          )}
+                        </button>
+                      </td>
+                      <td className="p-4">
+                        <div className="font-mono font-bold text-slate-900 flex items-center gap-2">
+                          <PhoneCall className="h-3.5 w-3.5 text-teal-600" />
+                          {t.source_call_id || `CALL-${t.id.substring(0, 8).toUpperCase()}`}
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-700 text-[10px]">
+                            {t.audio_file_key ? "Audio Call" : "Text"}
+                          </span>
+                          {t.detected_language && (
+                            <span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 font-bold text-indigo-800 text-[10px]">
+                              {t.detected_language}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        {latestRun && latestRun.status === "done" && typeof latestRun.overall_score === "number" ? (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${
+                              latestRun.overall_score >= 80
+                                ? "bg-emerald-100 text-emerald-800"
+                                : latestRun.overall_score >= 60
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {Math.round(latestRun.overall_score * 10) / 10}%
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-medium">—</span>
+                        )}
+                      </td>
+                      <td className="p-4 font-bold text-slate-600">{transcriptRuns.length}</td>
+                      <td className="p-4 text-slate-500 font-medium">
+                        {new Date(t.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-2">
+                          {canDelete && (
+                            <button
+                              onClick={() => setTranscriptToDelete(t)}
+                              className="p-1 text-slate-400 hover:text-rose-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                          <Link
+                            href={`/transcripts/${t.id}`}
+                            className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-1 text-xs font-bold text-slate-800 hover:border-teal-500 hover:text-teal-600"
+                          >
+                            View
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

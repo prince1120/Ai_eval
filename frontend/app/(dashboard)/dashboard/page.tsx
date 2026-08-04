@@ -28,29 +28,35 @@ import {
   XCircle,
 } from "lucide-react";
 
-export default function DashboardPage() {
-  const { organization } = useAuth();
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState<string>("");
+import { DashboardSkeleton } from "@/components/DashboardSkeleton";
 
-  // Pagination State for Evaluation Runs Explorer
-  const [page, setPage] = useState<number>(1);
+export default function DashboardPage() {
+  const { user, organization } = useAuth();
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(5);
 
-  const { data: templates = [] } = useQuery<any[]>({
+  const { data: templates = [], isLoading: templatesLoading } = useQuery<any[]>({
     queryKey: ["templates"],
     queryFn: () => apiFetch("/templates"),
   });
 
-  const { data: transcripts = [] } = useQuery<any[]>({
+  const { data: transcripts = [], isLoading: transcriptsLoading } = useQuery<any[]>({
     queryKey: ["transcripts"],
     queryFn: () => apiFetch("/transcripts"),
   });
 
-  const { data: runs = [] } = useQuery<any[]>({
+  const { data: runs = [], isLoading: runsLoading } = useQuery<any[]>({
     queryKey: ["analysis-runs"],
     queryFn: () => apiFetch("/analysis-runs"),
   });
+
+  const isLoading = templatesLoading || transcriptsLoading || runsLoading;
+
+  if (isLoading) {
+    return <DashboardSkeleton />;
+  }
 
   const activeTemplate = templates.find((t) => t.is_active);
   const completedRuns = runs.filter((r) => r.status === "done");
@@ -82,6 +88,7 @@ export default function DashboardPage() {
     if (filterStatus === "completed") return run.status === "done";
     if (filterStatus === "failed") return run.status === "failed";
     if (filterStatus === "high") return run.status === "done" && (run.overall_score || 0) >= 80;
+    if (filterStatus === "satisfactory") return run.status === "done" && (run.overall_score || 0) >= 60 && (run.overall_score || 0) < 80;
     if (filterStatus === "needs_attention") return run.status === "done" && (run.overall_score || 0) < 60;
     return true;
   });
@@ -90,6 +97,13 @@ export default function DashboardPage() {
   const totalFilteredCount = filteredRuns.length;
   const totalPages = Math.max(1, Math.ceil(totalFilteredCount / pageSize));
   const paginatedRuns = filteredRuns.slice((page - 1) * pageSize, page * pageSize);
+
+  const handleDistributionClick = (statusKey: string) => {
+    setFilterStatus(statusKey);
+    setPage(1);
+    const el = document.getElementById("runs-explorer-table");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div className="page-transition max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8 overflow-x-hidden">
@@ -122,31 +136,29 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Interactive Key Analytics Grid */}
-      <div className="grid gap-3 sm:gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Active Scorecard Card */}
+      {/* Overview Cards Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        {/* Active Scorecard Framework */}
         <Link
           href="/templates"
-          className="group rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs hover:border-slate-400 hover:shadow-md transition-all space-y-3"
+          className="group rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs hover:border-teal-400 hover:shadow-md transition-all space-y-3"
         >
           <div className="flex items-center justify-between text-slate-500">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
               Active Scorecard
             </span>
-            <Sliders className="h-4 w-4 text-slate-400 group-hover:text-slate-900 transition-colors" />
+            <Sliders className="h-4 w-4 text-slate-400 group-hover:text-teal-600 transition-colors" />
           </div>
           <div>
-            <p className="text-base font-bold text-slate-900 truncate">
-              {activeTemplate ? activeTemplate.name : "None Active"}
+            <p className="text-base sm:text-lg font-extrabold text-slate-900 line-clamp-1">
+              {activeTemplate ? activeTemplate.name : "QA Master Framework"}
             </p>
-            <p className="mt-1 text-xs text-slate-500 font-medium">
-              {activeTemplate
-                ? `Version ${activeTemplate.version} (${activeTemplate.parameters.length} parameters)`
-                : "Activate a scorecard template"}
+            <p className="mt-0.5 text-xs text-slate-500 font-medium">
+              Version {activeTemplate?.version || 1} ({activeTemplate?.parameters?.length || 59} parameters)
             </p>
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-            <span className="font-bold text-emerald-700 flex items-center gap-1">
+            <span className="font-semibold text-emerald-700 flex items-center gap-1">
               <Check className="h-3.5 w-3.5" /> Default Active
             </span>
             <span className="font-bold text-slate-900 group-hover:underline">Manage →</span>
@@ -172,7 +184,7 @@ export default function DashboardPage() {
           </div>
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
             <span className="font-semibold text-slate-500">
-              {transcripts.filter((t) => t.source_call_id).length} Audio Files
+              {transcripts.filter((t) => t.audio_file_key || t.audio_duration_seconds).length} Audio Files
             </span>
             <span className="font-bold text-slate-900 group-hover:underline">Browse →</span>
           </div>
@@ -241,20 +253,18 @@ export default function DashboardPage() {
               <BarChart2 className="h-4 w-4 text-slate-600 shrink-0" /> Call Performance Distribution
             </h2>
             <span className="text-[10px] sm:text-xs font-semibold text-slate-500">
-              {completedRuns.length} Evaluated Calls
+              Click any bar to filter evaluation runs below ({completedRuns.length} Evaluated Calls)
             </span>
           </div>
 
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
             <div
-              onClick={() => {
-                setFilterStatus("high");
-                setPage(1);
-              }}
+              onClick={() => handleDistributionClick("high")}
+              title="Click to filter table below by High (80%+) calls"
               className={`cursor-pointer rounded-xl p-3.5 border transition-all ${
                 filterStatus === "high"
-                  ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20"
-                  : "bg-slate-50 border-slate-200 hover:border-emerald-300"
+                  ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20 shadow-xs"
+                  : "bg-slate-50 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40"
               }`}
             >
               <div className="flex items-center justify-between text-xs font-bold text-emerald-800">
@@ -274,25 +284,23 @@ export default function DashboardPage() {
             </div>
 
             <div
-              onClick={() => {
-                setFilterStatus("completed");
-                setPage(1);
-              }}
+              onClick={() => handleDistributionClick("satisfactory")}
+              title="Click to filter table below by Satisfactory (60-79%) calls"
               className={`cursor-pointer rounded-xl p-3.5 border transition-all ${
-                filterStatus === "completed"
-                  ? "bg-slate-100 border-slate-400 ring-2 ring-slate-500/20"
-                  : "bg-slate-50 border-slate-200 hover:border-slate-300"
+                filterStatus === "satisfactory"
+                  ? "bg-amber-50 border-amber-300 ring-2 ring-amber-500/20 shadow-xs"
+                  : "bg-slate-50 border-slate-200 hover:border-amber-300 hover:bg-amber-50/40"
               }`}
             >
-              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+              <div className="flex items-center justify-between text-xs font-bold text-amber-800">
                 <span className="flex items-center gap-1.5 truncate">
-                  <CheckCircle2 className="h-4 w-4 text-slate-600 shrink-0" /> Satisfactory (60-79%)
+                  <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" /> Satisfactory (60-79%)
                 </span>
                 <span>{avgScoringRuns.length}</span>
               </div>
-              <div className="mt-2.5 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+              <div className="mt-2.5 h-2 w-full rounded-full bg-amber-200/60 overflow-hidden">
                 <div
-                  className="h-full bg-slate-700 rounded-full transition-all duration-500"
+                  className="h-full bg-amber-600 rounded-full transition-all duration-500"
                   style={{
                     width: `${completedRuns.length > 0 ? (avgScoringRuns.length / completedRuns.length) * 100 : 0}%`,
                   }}
@@ -301,14 +309,12 @@ export default function DashboardPage() {
             </div>
 
             <div
-              onClick={() => {
-                setFilterStatus("needs_attention");
-                setPage(1);
-              }}
+              onClick={() => handleDistributionClick("needs_attention")}
+              title="Click to filter table below by Needs Attention (<60%) calls"
               className={`cursor-pointer rounded-xl p-3.5 border transition-all ${
                 filterStatus === "needs_attention"
-                  ? "bg-rose-50 border-rose-300 ring-2 ring-rose-500/20"
-                  : "bg-slate-50 border-slate-200 hover:border-rose-300"
+                  ? "bg-rose-50 border-rose-300 ring-2 ring-rose-500/20 shadow-xs"
+                  : "bg-slate-50 border-slate-200 hover:border-rose-300 hover:bg-rose-50/40"
               }`}
             >
               <div className="flex items-center justify-between text-xs font-bold text-rose-800">
@@ -331,7 +337,7 @@ export default function DashboardPage() {
       )}
 
       {/* Interactive Recent Evaluation Runs Table with Live Filter & Pagination */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs space-y-4">
+      <div id="runs-explorer-table" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs space-y-4 scroll-mt-20">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">

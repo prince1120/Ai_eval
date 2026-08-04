@@ -33,6 +33,8 @@ import {
   Check,
 } from "lucide-react";
 
+import { useToast } from "@/components/Toast";
+
 export interface ParameterResult {
   id: string;
   parameter_id?: string;
@@ -236,7 +238,7 @@ export function DynamicResultsList({
   llmModelUsed, templateName, templateVersion, callReference, evaluatedAt,
   creator, tokenUsage, transcript,
 }: DynamicResultsListProps) {
-  // ── Filter & Search State ──────────────────────────────────────
+  const { showToast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [collapsedParams, setCollapsedParams] = useState<Set<string>>(new Set());
@@ -249,6 +251,7 @@ export function DynamicResultsList({
     if (!textToCopy) return;
     navigator.clipboard.writeText(textToCopy);
     setCopiedTranscript(true);
+    try { showToast("Transcript text copied to clipboard!", "success"); } catch (e) {}
     setTimeout(() => setCopiedTranscript(false), 2000);
   };
 
@@ -331,10 +334,10 @@ export function DynamicResultsList({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 {callReference && (
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-xs min-w-0">
                     <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                    <span className="text-slate-500 font-medium">Call Reference:</span>
-                    <span className="font-bold text-slate-900 font-mono">{callReference}</span>
+                    <span className="text-slate-500 font-medium shrink-0">Call Reference:</span>
+                    <span className="font-bold text-slate-900 font-mono break-all text-[11px] truncate">{callReference}</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2 text-xs">
@@ -457,8 +460,8 @@ export function DynamicResultsList({
           </div>
 
           {/* Filter tabs */}
-          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 border border-slate-200 text-xs shrink-0">
-            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400 ml-1" />
+          <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 border border-slate-200 text-xs shrink-0 overflow-x-auto max-w-full">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-400 ml-1 shrink-0" />
             {(["all", "pass", "average", "fail"] as FilterTab[]).map((tab) => {
               const count = tab === "all" ? parameterResults.length
                 : tab === "pass" ? passCount
@@ -687,7 +690,7 @@ export function DynamicResultsList({
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <FileText className="h-4 w-4 text-teal-600" /> Full Call Transcript
             </h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 border border-slate-200 text-xs print:hidden">
                 <button onClick={() => setTranscriptViewMode("dialogue")}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1 font-bold transition-all ${transcriptViewMode === "dialogue" ? "bg-teal-600 text-white" : "text-slate-600 hover:text-slate-900"}`}>

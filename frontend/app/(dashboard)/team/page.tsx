@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Modal } from "@/components/Modal";
+import { TeamSkeleton } from "@/components/TeamSkeleton";
 import { formatToUserLocalTime } from "@/lib/date-utils";
 import {
   Users,
@@ -556,11 +557,7 @@ export default function TeamPage() {
 
       {/* Users Grid / Table */}
       {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-32 rounded-2xl bg-white animate-pulse border border-slate-200" />
-          ))}
-        </div>
+        <TeamSkeleton />
       ) : filteredUsers.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center shadow-xs">
           <Users className="mx-auto h-12 w-12 text-slate-400" />

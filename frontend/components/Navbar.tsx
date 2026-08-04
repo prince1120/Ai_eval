@@ -42,7 +42,7 @@ export function Navbar() {
       : baseNavItems;
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/90 backdrop-blur-md shadow-xs">
+    <header suppressHydrationWarning className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/90 backdrop-blur-md shadow-xs">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6 py-3.5">
         {/* Brand Logo - Company: Scribe, Product: Teal AI */}
         <Link href="/dashboard" className="flex items-center gap-3">

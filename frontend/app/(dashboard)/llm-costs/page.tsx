@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatToUserLocalTime } from "@/lib/date-utils";
+import { LLMCostsSkeleton } from "@/components/LLMCostsSkeleton";
 import {
   DollarSign,
   Cpu,
@@ -101,6 +102,12 @@ export default function LLMCostsPage() {
         </p>
       </div>
     );
+  }
+
+  const isLoading = isLoadingSummary || isLoadingBreakdown || isLoadingLogs;
+
+  if (isLoading) {
+    return <LLMCostsSkeleton />;
   }
 
   const formatUsd = (val: number | undefined) => {
