@@ -24,6 +24,7 @@ import {
   Sliders,
   MessageSquare,
   AlignLeft,
+  Check,
 } from "lucide-react";
 
 export default function TranscriptDetailPage() {
@@ -36,6 +37,18 @@ export default function TranscriptDetailPage() {
   const [transcriptViewMode, setTranscriptViewMode] = useState<"dialogue" | "raw">("dialogue");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [analyzeError, setAnalyzeError] = useState("");
+  const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
+  const templateMenuRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (templateMenuRef.current && !templateMenuRef.current.contains(e.target as Node)) {
+        setIsTemplateMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const { data: transcript, isLoading } = useQuery<any>({
     queryKey: ["transcript", transcriptId],
@@ -45,7 +58,17 @@ export default function TranscriptDetailPage() {
   const { data: runs = [] } = useQuery<any[]>({
     queryKey: ["transcript-runs", transcriptId],
     queryFn: () => apiFetch(`/transcripts/${transcriptId}/analysis-runs`),
+    refetchOnMount: true,
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && data.some((r: any) => r.status === "pending" || r.status === "processing")) {
+        return 2000;
+      }
+      return false;
+    },
   });
+
 
   const { data: templates = [] } = useQuery<any[]>({
     queryKey: ["templates"],
@@ -277,33 +300,96 @@ export default function TranscriptDetailPage() {
 
       {/* Main Control Panel */}
       <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div>
-          <span className="font-mono text-xs font-bold text-teal-600 bg-teal-50 px-2.5 py-1 rounded-md border border-teal-200">
+        <div className="space-y-1.5 min-w-0">
+          <span className="font-mono text-[11px] font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-md border border-teal-200 truncate inline-block max-w-full">
             {transcript.source_call_id || `Transcript ID: ${transcript.id.substring(0, 8)}`}
           </span>
-          <h1 className="mt-2.5 text-2xl font-extrabold text-slate-900">Call Evaluation Panel</h1>
-          <p className="mt-1 text-xs text-slate-500">
+          <h1 className="text-lg sm:text-2xl font-black tracking-tight text-slate-900">
+            Call Evaluation Panel
+          </h1>
+          <p className="text-xs text-slate-500">
             Uploaded on {formatToUserLocalTime(transcript.created_at)}
           </p>
         </div>
 
-        {/* Template Selector & Trigger Button */}
+
+        {/* Custom Scorecard Dropdown Selector & Trigger Button */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-          <div className="relative w-full sm:w-auto">
-            <Sliders className="absolute left-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
-            <select
-              value={selectedTemplateId || (activeTemplate?.id || "")}
-              onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="w-full sm:w-64 max-w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 py-2.5 text-xs font-bold text-slate-800 appearance-none focus:border-teal-500 focus:outline-none cursor-pointer shadow-xs truncate"
-            >
-              {templates.map((tpl) => (
-                <option key={tpl.id} value={tpl.id}>
-                  {tpl.name} (v{tpl.version}) {tpl.is_active ? "★ Default" : ""}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-3.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          {/* Custom Template Select Dropdown */}
+          <div ref={templateMenuRef} className="relative w-full sm:w-64">
+            {(() => {
+              const currentTpl = templates.find(
+                (t) => t.id === (selectedTemplateId || activeTemplate?.id)
+              );
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsTemplateMenuOpen(!isTemplateMenuOpen)}
+                    className="w-full flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-800 hover:bg-white hover:border-teal-500 transition-all shadow-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <Sliders className="h-4 w-4 text-teal-600 shrink-0" />
+                      <span className="truncate">
+                        {currentTpl
+                          ? `${currentTpl.name} (v${currentTpl.version})`
+                          : "Select Scorecard..."}
+                      </span>
+                    </div>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform ${
+                        isTemplateMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+
+                  {isTemplateMenuOpen && (
+                    <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 z-50 w-full sm:w-80 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150">
+                      {templates.map((tpl) => {
+                        const isSelected =
+                          tpl.id === (selectedTemplateId || activeTemplate?.id);
+                        return (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTemplateId(tpl.id);
+                              setIsTemplateMenuOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-xs font-bold text-left transition-all ${
+                              isSelected
+                                ? "bg-teal-50 text-teal-900 border border-teal-200"
+                                : "text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate font-extrabold">
+                                  {tpl.name}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  v{tpl.version}
+                                </span>
+                              </div>
+                              {tpl.is_active && (
+                                <span className="inline-block text-[10px] font-bold text-teal-600">
+                                  Default Scorecard
+                                </span>
+                              )}
+                            </div>
+                            {isSelected && (
+                              <Check className="h-4 w-4 text-teal-600 shrink-0" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
+
 
           <button
             onClick={() => analyzeMutation.mutate(selectedTemplateId || activeTemplate?.id)}

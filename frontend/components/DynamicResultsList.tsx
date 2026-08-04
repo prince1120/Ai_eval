@@ -265,11 +265,30 @@ export function DynamicResultsList({
     ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  // Scroll to a specific parameter card by id
+  const [highlightedParamId, setHighlightedParamId] = useState<string | null>(null);
+
+  // Scroll to a specific parameter card by id and pulse highlight it
   const scrollToParam = useCallback((paramId: string) => {
-    const el = document.getElementById(`param-${paramId}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setCollapsedParams((prev) => {
+      const next = new Set(prev);
+      next.delete(paramId);
+      return next;
+    });
+
+    setHighlightedParamId(paramId);
+
+    setTimeout(() => {
+      const el = document.getElementById(`param-${paramId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 60);
+
+    setTimeout(() => {
+      setHighlightedParamId((current) => (current === paramId ? null : current));
+    }, 2500);
   }, []);
+
 
   const grade = getGradeInfo(overallScore);
   const passCount = parameterResults.filter((p) => getParamStatus(p.score, p.max_score) === "pass").length;
@@ -573,13 +592,21 @@ export function DynamicResultsList({
               const barColor = getParamBarColor(status);
               const badge = getParamBadge(status);
               const isCollapsed = collapsedParams.has(result.id);
+              const isHighlighted = highlightedParamId === result.id;
               const globalIdx = parameterResults.findIndex((p) => p.id === result.id) + 1;
 
               return (
                 <div
                   key={result.id}
                   id={`param-${result.id}`}
-                  className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs print:shadow-none print:break-inside-avoid scroll-mt-48">
+                  className={`rounded-2xl border overflow-hidden transition-all duration-700 ease-in-out shadow-xs print:shadow-none print:break-inside-avoid scroll-mt-24 ${
+                    isHighlighted
+                      ? "border-teal-500 bg-teal-50/70 ring-4 ring-teal-500/30 shadow-lg"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+
+                >
+
                   {/* Header — always visible, click to collapse */}
                   <button
                     onClick={() => toggleCollapse(result.id)}

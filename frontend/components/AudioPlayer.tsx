@@ -21,13 +21,16 @@ interface AudioPlayerProps {
   durationSeconds?: number | null;
 }
 
+const audioUrlCache = new Map<string, string>();
+
 export function AudioPlayer({
   transcriptId,
   detectedLanguage,
   durationSeconds,
 }: AudioPlayerProps) {
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const cachedUrl = audioUrlCache.get(transcriptId) || null;
+  const [audioUrl, setAudioUrl] = useState<string | null>(cachedUrl);
+  const [isLoading, setIsLoading] = useState(!cachedUrl);
   const [error, setError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -38,12 +41,20 @@ export function AudioPlayer({
 
   useEffect(() => {
     let isMounted = true;
+
+    if (audioUrlCache.has(transcriptId)) {
+      setAudioUrl(audioUrlCache.get(transcriptId)!);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
     apiFetch<{ url: string }>(`/transcripts/${transcriptId}/audio`)
       .then((data) => {
         if (isMounted) {
+          audioUrlCache.set(transcriptId, data.url);
           setAudioUrl(data.url);
           setIsLoading(false);
         }
@@ -59,6 +70,7 @@ export function AudioPlayer({
       isMounted = false;
     };
   }, [transcriptId]);
+
 
   const togglePlay = () => {
     if (!audioRef.current) return;

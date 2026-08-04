@@ -54,11 +54,20 @@ export default function AnalysisRunDetailPage() {
     },
   });
 
+  React.useEffect(() => {
+    if (run?.status === "done" && run?.transcript_id) {
+      queryClient.invalidateQueries({ queryKey: ["analysis-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["transcript-runs", run.transcript_id] });
+      queryClient.invalidateQueries({ queryKey: ["transcripts"] });
+    }
+  }, [run?.status, run?.transcript_id, queryClient]);
+
   const { data: transcript } = useQuery<any>({
     queryKey: ["transcript", run?.transcript_id],
     queryFn: () => apiFetch(`/transcripts/${run.transcript_id}`),
     enabled: !!run?.transcript_id,
   });
+
 
   // Fetch template info for report metadata
   const { data: templates = [] } = useQuery<any[]>({
