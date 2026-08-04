@@ -61,57 +61,52 @@ h1, h2, h3, h4, h5, h6 {
 
 /* ── Print / PDF Styles ────────────────────────────────────── */
 @media print {
-  /* Hide everything except the report */
-  body > *:not(#__next) { display: none !important; }
-
-  /* Hide nav, sidebars, modals, action bars */
-  nav,
-  aside,
-  header,
-  footer,
-  [data-radix-portal],
-  .print\:hidden {
-    display: none !important;
+  /* Step 1: Hide everything on the page */
+  body * {
+    visibility: hidden;
   }
 
-  body {
-    background: white !important;
-    color: #0f172a;
-    font-size: 11pt;
-    line-height: 1.5;
+  /* Step 2: Make ONLY the report content visible */
+  .report-content,
+  .report-content * {
+    visibility: visible;
   }
 
-  /* Report content fills the page */
+  /* Step 3: Position the report at the top-left of the page */
   .report-content {
-    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    max-width: 100%;
     padding: 0;
     margin: 0;
   }
 
-  /* Remove shadows and decorative rings in print */
-  .report-content * {
-    box-shadow: none !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+  /* Step 4: Preserve background colors and borders in print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  /* Keep page breaks clean */
+  /* Step 5: Hide interactive-only elements within the report */
+  .print\:hidden {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Step 6: Page breaks */
   .print\:break-inside-avoid {
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
-  /* Gradient accent bar — keep color */
-  .bg-gradient-to-r {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  /* Full-page layout */
+  /* Step 7: Page setup */
   @page {
     size: A4 portrait;
-    margin: 16mm 14mm;
+    margin: 14mm 12mm;
+  }
+
+  body {
+    background: white !important;
   }
 }
