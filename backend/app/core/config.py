@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     GROQ_STT_BASE_URL: str = "https://api.groq.com/openai/v1"
     STT_MODEL_NAME: str = "whisper-large-v3-turbo"
 
+    # MinIO Object Storage (Audio files)
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "call-recordings"
+    MINIO_SECURE: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -9,7 +9,7 @@ export function getApiBaseUrl(): string {
   return "http://localhost:8000/api/v1";
 }
 
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 180000; // 3 minutes for STT + LLM evaluation
 
 export class ApiError extends Error {
   status: number;
@@ -28,7 +28,7 @@ export class ApiError extends Error {
 
 export async function apiFetch<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeoutMs?: number } = {}
 ): Promise<T> {
   const isFormData = options.body instanceof FormData;
 
@@ -40,7 +40,8 @@ export async function apiFetch<T>(
   const baseUrl = getApiBaseUrl();
   const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint}`;
 
-  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs || REQUEST_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = options.signal
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;

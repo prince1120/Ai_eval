@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { DynamicResultsList } from "@/components/DynamicResultsList";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { exportSingleRunToCSV, exportSingleRunToJSON } from "@/lib/export-utils";
 import {
   ArrowLeft,
@@ -16,6 +17,7 @@ import {
   FileCode,
   RefreshCw,
   Printer,
+  FileText,
 } from "lucide-react";
 
 const MAX_POLL_MS = 5 * 60 * 1000;
@@ -131,6 +133,20 @@ export default function AnalysisRunDetailPage() {
 
         {run.status === "done" && (
           <div className="flex items-center gap-2 flex-wrap">
+            {/* View Transcript Jump Button */}
+            <button
+              onClick={() => {
+                const el = document.getElementById("transcript-section");
+                if (el) {
+                  el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3.5 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100 transition-all shadow-xs"
+              title="Jump to Call Transcript"
+            >
+              <FileText className="h-3.5 w-3.5 text-teal-600" /> View Transcript
+            </button>
+
             {/* Print / PDF */}
             <button
               onClick={handlePrint}
@@ -194,6 +210,15 @@ export default function AnalysisRunDetailPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Audio Player (if transcript has recording) */}
+      {run.status === "done" && transcript?.id && (
+        <AudioPlayer
+          transcriptId={transcript.id}
+          detectedLanguage={transcript.detected_language}
+          durationSeconds={transcript.audio_duration_seconds}
+        />
       )}
 
       {/* Completed Results — Full Professional Report */}

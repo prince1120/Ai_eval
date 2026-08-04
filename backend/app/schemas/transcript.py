@@ -9,6 +9,9 @@ class TranscriptCreate(BaseModel):
     raw_text: str = Field(..., min_length=10)
     source_call_id: Optional[str] = None
     speaker_segments: Optional[Dict[str, Any]] = None
+    audio_file_key: Optional[str] = None
+    detected_language: Optional[str] = None
+    audio_duration_seconds: Optional[float] = None
 
 
 class TranscriptResponse(BaseModel):
@@ -19,6 +22,9 @@ class TranscriptResponse(BaseModel):
     raw_text: str
     speaker_segments: Optional[Dict[str, Any]]
     status: str
+    audio_file_key: Optional[str] = None
+    detected_language: Optional[str] = None
+    audio_duration_seconds: Optional[float] = None
     created_at: datetime
     creator: Optional[UserResponse] = None
 

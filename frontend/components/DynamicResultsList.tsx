@@ -27,6 +27,10 @@ import {
   X,
   SlidersHorizontal,
   Hash,
+  Globe,
+  Info,
+  Copy,
+  Check,
 } from "lucide-react";
 
 export interface ParameterResult {
@@ -71,6 +75,8 @@ interface DynamicResultsListProps {
   transcript?: {
     raw_text?: string;
     speaker_segments?: { diarized_text?: string };
+    detected_language?: string | null;
+    audio_duration_seconds?: number | null;
   };
 }
 
@@ -175,10 +181,12 @@ function SpeakerDialogue({ text }: { text: string }) {
   }
   if (currentSpeaker && currentText.trim()) turns.push({ speaker: currentSpeaker, text: currentText.trim() });
 
-  const displayTurns = expanded ? turns : turns.slice(0, 4);
+  const screenTurns = expanded ? turns : turns.slice(0, 4);
+  const hiddenTurns = turns.slice(4);
+
   return (
     <div className="space-y-3">
-      {displayTurns.map((turn, idx) => {
+      {screenTurns.map((turn, idx) => {
         const isAgent = turn.speaker === "Agent";
         return (
           <div key={idx} className={`rounded-xl p-3.5 border text-xs leading-relaxed ${isAgent ? "bg-indigo-50/80 border-indigo-200 sm:mr-8" : "bg-teal-50/80 border-teal-200 sm:ml-8"}`}>
@@ -192,6 +200,27 @@ function SpeakerDialogue({ text }: { text: string }) {
           </div>
         );
       })}
+
+      {/* When not expanded on screen, render the remaining turns in hidden print:block so PDF prints 100% of dialogue */}
+      {!expanded && hiddenTurns.length > 0 && (
+        <div className="hidden print:block space-y-3">
+          {hiddenTurns.map((turn, idx) => {
+            const isAgent = turn.speaker === "Agent";
+            return (
+              <div key={idx + 4} className={`rounded-xl p-3.5 border text-xs leading-relaxed ${isAgent ? "bg-indigo-50/80 border-indigo-200 sm:mr-8" : "bg-teal-50/80 border-teal-200 sm:ml-8"}`}>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  {isAgent ? <UserCheck className="h-3.5 w-3.5 text-indigo-600" /> : <User className="h-3.5 w-3.5 text-teal-600" />}
+                  <span className={`font-bold text-[10px] uppercase tracking-wider ${isAgent ? "text-indigo-700" : "text-teal-700"}`}>
+                    {isAgent ? "Agent / Support Rep" : "Customer / Caller"}
+                  </span>
+                </div>
+                <p className="font-medium text-slate-800">{turn.text}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {turns.length > 4 && (
         <button onClick={() => setExpanded(!expanded)}
           className="flex items-center justify-center gap-1.5 w-full rounded-xl bg-slate-100 border border-slate-200 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-all print:hidden">
@@ -213,6 +242,15 @@ export function DynamicResultsList({
   const [collapsedParams, setCollapsedParams] = useState<Set<string>>(new Set());
   const [transcriptViewMode, setTranscriptViewMode] = useState<"dialogue" | "raw">("dialogue");
   const [transcriptExpanded, setTranscriptExpanded] = useState(false);
+  const [copiedTranscript, setCopiedTranscript] = useState(false);
+
+  const handleCopyTranscript = () => {
+    const textToCopy = transcript?.speaker_segments?.diarized_text || transcript?.raw_text || "";
+    if (!textToCopy) return;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedTranscript(true);
+    setTimeout(() => setCopiedTranscript(false), 2000);
+  };
 
   // ── Section refs for jump nav ─────────────────────────────────
   const overviewRef = useRef<HTMLDivElement>(null);
@@ -304,6 +342,26 @@ export function DynamicResultsList({
                   <span className="text-slate-500 font-medium">Evaluated:</span>
                   <span className="font-bold text-slate-900">{reportDate}</span>
                 </div>
+                {transcript?.detected_language && (
+                  <div className="flex items-center gap-2 text-xs flex-wrap">
+                    <Globe className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+                    <span className="text-slate-500 font-medium">Spoken Languages:</span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {transcript.detected_language
+                        .split(",")
+                        .map((l) => l.trim())
+                        .filter(Boolean)
+                        .map((lang, idx) => (
+                          <span
+                            key={idx}
+                            className="font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md text-[11px] capitalize"
+                          >
+                            {lang}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )}
                 {creator && (
                   <div className="flex items-center gap-2 text-xs">
                     <UserCheck className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
@@ -371,7 +429,7 @@ export function DynamicResultsList({
             </button>
           )}
           {transcript && (dialogueText || transcript.raw_text) && (
-            <button onClick={() => scrollTo(transcriptRef)}
+            <button onClick={() => { setTranscriptExpanded(true); scrollTo(transcriptRef); }}
               className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:border-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 transition-all">
               Transcript
             </button>
@@ -612,7 +670,7 @@ export function DynamicResultsList({
                     <FileText className="h-3.5 w-3.5" />
                     {highlightText(sec.name_snapshot, searchQuery)}
                   </h3>
-                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-slate-800 bg-slate-50 p-3.5 rounded-xl border border-slate-200 font-medium">
+                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-800 bg-slate-50 p-3.5 rounded-xl border border-slate-200 font-medium">
                     {highlightText(sec.extracted_content || "No information extracted.", searchQuery)}
                   </p>
                 </div>
@@ -624,7 +682,7 @@ export function DynamicResultsList({
 
       {/* ── FULL CALL TRANSCRIPT ──────────────────────────────────── */}
       {transcript && (dialogueText || transcript.raw_text) && (
-        <div ref={transcriptRef} className="rounded-2xl border border-slate-200 bg-white shadow-xs print:shadow-none scroll-mt-4">
+        <div id="transcript-section" ref={transcriptRef} className="rounded-2xl border border-slate-200 bg-white shadow-xs print:shadow-none scroll-mt-24">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <FileText className="h-4 w-4 text-teal-600" /> Full Call Transcript
@@ -640,6 +698,26 @@ export function DynamicResultsList({
                   <AlignLeft className="h-3 w-3" /> Raw Text
                 </button>
               </div>
+
+              {/* Copy Transcript Button */}
+              <button
+                onClick={handleCopyTranscript}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-400 hover:text-teal-700 transition-all shadow-2xs print:hidden"
+                title="Copy transcript text to clipboard"
+              >
+                {copiedTranscript ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+
               <button onClick={() => setTranscriptExpanded(!transcriptExpanded)}
                 className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 print:hidden">
                 {transcriptExpanded ? <><ChevronUp className="h-3.5 w-3.5" /> Collapse</> : <><ChevronDown className="h-3.5 w-3.5" /> Expand</>}
@@ -652,7 +730,7 @@ export function DynamicResultsList({
             )}
             {transcriptViewMode === "dialogue" && dialogueText
               ? <SpeakerDialogue text={dialogueText} />
-              : <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-800 whitespace-pre-wrap">
+              : <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-800 whitespace-pre-wrap break-words">
                   {transcript.raw_text || dialogueText}
                 </div>}
           </div>

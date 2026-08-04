@@ -94,13 +94,25 @@ h1, h2, h3, h4, h5, h6 {
     visibility: hidden !important;
   }
 
-  /* Step 6: Page breaks */
+  /* Step 6: Expand max-height containers like transcript so full text prints */
+  .max-h-64,
+  .overflow-hidden {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Force all dialogue turns to display when printing */
+  .print-show-all {
+    display: block !important;
+  }
+
+  /* Step 7: Page breaks */
   .print\:break-inside-avoid {
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
-  /* Step 7: Page setup */
+  /* Step 8: Page setup */
   @page {
     size: A4 portrait;
     margin: 14mm 12mm;

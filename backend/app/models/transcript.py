@@ -24,6 +24,13 @@ class Transcript(Base, TimestampMixin):
     speaker_segments: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="uploaded", nullable=False)
 
+    # Audio storage — MinIO object key e.g. "org-uuid/transcript-uuid.mp3"
+    audio_file_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Language detected by Groq Whisper STT (e.g. "english", "hindi", "arabic")
+    detected_language: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Exact audio duration in seconds from Whisper verbose_json response
+    audio_duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Relationships
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     analysis_runs: Mapped[List["AnalysisRun"]] = relationship(

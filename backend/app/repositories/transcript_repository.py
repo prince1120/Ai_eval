@@ -28,6 +28,9 @@ class TranscriptRepository:
         source_call_id: Optional[str] = None,
         speaker_segments: Optional[Dict[str, Any]] = None,
         created_by: Optional[uuid.UUID] = None,
+        audio_file_key: Optional[str] = None,
+        detected_language: Optional[str] = None,
+        audio_duration_seconds: Optional[float] = None,
     ) -> Transcript:
         transcript = Transcript(
             organization_id=organization_id,
@@ -36,6 +39,9 @@ class TranscriptRepository:
             speaker_segments=speaker_segments,
             status="uploaded",
             created_by=created_by,
+            audio_file_key=audio_file_key,
+            detected_language=detected_language,
+            audio_duration_seconds=audio_duration_seconds,
         )
         self.session.add(transcript)
         await self.session.flush()

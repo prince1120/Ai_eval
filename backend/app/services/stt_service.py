@@ -31,6 +31,63 @@ def estimate_audio_duration_seconds(file_bytes: bytes, filename: str) -> float:
     return (len(file_bytes) * 8) / 64_000
 
 
+def detect_all_transcript_languages(text: str, whisper_lang: Optional[str] = None) -> List[str]:
+    """Detect all languages and scripts present in the transcript text."""
+    langs = []
+
+    # 1. Devanagari Script (Hindi, Marathi)
+    if re.search(r'[\u0900-\u097F]', text):
+        langs.append("Hindi (Devanagari)")
+
+    # 2. Tamil Script
+    if re.search(r'[\u0B80-\u0BFF]', text):
+        langs.append("Tamil")
+
+    # 3. Telugu Script
+    if re.search(r'[\u0C00-\u0C7F]', text):
+        langs.append("Telugu")
+
+    # 4. Bengali Script
+    if re.search(r'[\u0980-\u09FF]', text):
+        langs.append("Bengali")
+
+    # 5. Gujarati Script
+    if re.search(r'[\u0A80-\u0AFF]', text):
+        langs.append("Gujarati")
+
+    # 6. Arabic / Urdu Script
+    if re.search(r'[\u0600-\u06FF]', text):
+        langs.append("Arabic / Urdu")
+
+    # 7. Romanized Hindi / Hinglish words (common speech terms in Latin script)
+    hinglish_keywords = [
+        r'\baap\b', r'\bhai\b', r'\bhain\b', r'\bka\b', r'\bki\b', r'\bke\b', r'\bko\b',
+        r'\bkya\b', r'\bnahi\b', r'\bnahin\b', r'\bkar\b', r'\bkaro\b', r'\bkarna\b',
+        r'\bbolo\b', r'\bbaat\b', r'\bhaan\b', r'\bacha\b', r'\bdekh\b', r'\bji\b'
+    ]
+    hinglish_matches = sum(1 for kw in hinglish_keywords if re.search(kw, text, re.IGNORECASE))
+    if hinglish_matches >= 2:
+        langs.append("Hinglish")
+
+    # 8. English (Latin script with English words)
+    english_keywords = [
+        r'\bthe\b', r'\bis\b', r'\byou\b', r'\bhave\b', r'\bthis\b', r'\bcall\b',
+        r'\bwith\b', r'\bproduct\b', r'\bservice\b', r'\bplease\b', r'\bokay\b', r'\byes\b'
+    ]
+    english_matches = sum(1 for kw in english_keywords if re.search(kw, text, re.IGNORECASE))
+    if english_matches >= 2 or (whisper_lang and whisper_lang.lower() in ["en", "english"]):
+        if "English" not in langs:
+            langs.append("English")
+
+    if whisper_lang and whisper_lang.capitalize() not in langs and whisper_lang.lower() not in ["en", "english", "hi", "hindi"]:
+        langs.append(whisper_lang.capitalize())
+
+    if not langs:
+        langs = ["English"]
+
+    return langs
+
+
 class STTService:
 
     def __init__(
@@ -135,22 +192,40 @@ class STTService:
         audio_file = (filename, io.BytesIO(file_bytes))
         start_time = time.perf_counter()
 
+        # Multilingual prompt to guide Groq Whisper for Indian accent, Hindi, Hinglish & English calls
+        stt_prompt = (
+            "This is a customer support call audio recording in Hindi, Hinglish (Hindi + English), or English. "
+            "Transcribe exact spoken words accurately in original script and language (Devanagari for Hindi, Latin for English)."
+        )
+
         response = await self.client.audio.transcriptions.create(
             model=self.stt_model_name,
             file=audio_file,
+            response_format="verbose_json",
+            prompt=stt_prompt,
         )
         end_time = time.perf_counter()
         stt_latency_ms = int((end_time - start_time) * 1000)
 
-        raw_transcription = response.text if hasattr(response, "text") else str(response)
-        logger.info(f"Groq Whisper raw transcription complete: {len(raw_transcription)} chars")
+        raw_transcription = getattr(response, "text", None) or str(response)
+        whisper_lang = getattr(response, "language", None)
+        duration_seconds = getattr(response, "duration", None)
 
-        # Whisper is billed per second of audio, not per token - see
-        # estimate_audio_duration_seconds() docstring for accuracy caveats.
-        duration_seconds = estimate_audio_duration_seconds(file_bytes, filename)
+        # Detect all spoken languages and scripts used in the transcript
+        all_langs = detect_all_transcript_languages(raw_transcription, whisper_lang=whisper_lang)
+        detected_language = ", ".join(all_langs)
+
+        if not duration_seconds:
+            duration_seconds = estimate_audio_duration_seconds(file_bytes, filename)
+
+        logger.info(
+            f"Groq Whisper raw transcription complete: {len(raw_transcription)} chars, "
+            f"language='{detected_language}', duration={duration_seconds}s"
+        )
+
         stt_usage = {
-            "duration_seconds": round(duration_seconds, 2),
-            "estimated_cost_usd": round(duration_seconds * GROQ_WHISPER_USD_PER_SECOND, 6),
+            "duration_seconds": round(float(duration_seconds), 2),
+            "estimated_cost_usd": round(float(duration_seconds) * GROQ_WHISPER_USD_PER_SECOND, 6),
             "is_estimated": True,
         }
 
@@ -160,6 +235,8 @@ class STTService:
         return {
             "raw_text": raw_transcription.strip(),
             "diarized_text": diarize_res["diarized_text"],
+            "detected_language": detected_language,
+            "audio_duration_seconds": round(float(duration_seconds), 2),
             "stt_usage": stt_usage,
             "stt_latency_ms": stt_latency_ms,
             "diarize_usage": diarize_res["token_usage"],

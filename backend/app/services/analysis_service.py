@@ -1,6 +1,6 @@
 import uuid
 import logging
-from typing import List, Optional
+from typing import List, Optional, Any
 from fastapi import HTTPException, status
 
 from app.repositories.transcript_repository import TranscriptRepository
@@ -15,6 +15,34 @@ from app.schemas.transcript import (
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+async def run_async_analysis_job(run_id: uuid.UUID, organization_id: uuid.UUID) -> None:
+    """Run an AI evaluation job in a non-blocking background task with its own independent DB session."""
+    from app.core.database import AsyncSessionLocal
+    from app.repositories.transcript_repository import TranscriptRepository
+    from app.repositories.template_repository import TemplateRepository
+    from app.services.llm_client import OpenAICompatibleClient
+    from app.services.prompt_builder_service import PromptBuilderService
+
+    async with AsyncSessionLocal() as session:
+        try:
+            transcript_repo = TranscriptRepository(session)
+            template_repo = TemplateRepository(session)
+            llm_client = OpenAICompatibleClient()
+            prompt_builder = PromptBuilderService(llm_client)
+
+            service = AnalysisService(
+                transcript_repo=transcript_repo,
+                template_repo=template_repo,
+                prompt_builder=prompt_builder,
+            )
+
+            await service.execute_analysis_job(run_id, organization_id)
+            await session.commit()
+        except Exception as err:
+            logger.exception(f"Background analysis task {run_id} failed: {err}")
+            await session.rollback()
 
 
 class AnalysisService:
@@ -38,6 +66,9 @@ class AnalysisService:
             source_call_id=req.source_call_id,
             speaker_segments=req.speaker_segments,
             created_by=user_id,
+            audio_file_key=req.audio_file_key,
+            detected_language=req.detected_language,
+            audio_duration_seconds=req.audio_duration_seconds,
         )
         refreshed = await self.transcript_repo.get_transcript(t.id, organization_id)
         return TranscriptResponse.model_validate(refreshed or t)
@@ -59,13 +90,21 @@ class AnalysisService:
         return [TranscriptResponse.model_validate(t) for t in transcripts]
 
     async def delete_transcript(
-        self, organization_id: uuid.UUID, transcript_id: uuid.UUID
+        self, organization_id: uuid.UUID, transcript_id: uuid.UUID, storage_service: Optional[Any] = None
     ) -> None:
         t = await self.transcript_repo.get_transcript(transcript_id, organization_id)
         if not t:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Transcript not found"
             )
+
+        # Also delete audio file from MinIO if stored
+        if t.audio_file_key and storage_service:
+            try:
+                await storage_service.delete_audio(t.audio_file_key)
+            except Exception as e:
+                logger.warning(f"Could not delete MinIO audio '{t.audio_file_key}': {e}")
+
         await self.transcript_repo.delete_transcript(t)
 
     async def get_analysis_run(
@@ -122,20 +161,38 @@ class AnalysisService:
                 new_tpl = await self.template_repo.create_template(
                     organization_id=organization_id,
                     name="Default Call Quality Scorecard",
-                    description="Standard evaluation criteria for call quality and compliance",
+                    description="Standard evaluation criteria for call quality, compliance, and comprehensive extractions",
                     version=1,
                     is_active=True,
                 )
                 await self.template_repo.add_parameter(
                     template_id=new_tpl.id,
-                    name="Politeness & Tone",
-                    ai_instructions="Evaluate agent polite greeting, tone of voice, and customer empathy.",
+                    name="Politeness & Professional Greeting",
+                    ai_instructions="Evaluate agent polite greeting, professional tone of voice, agent identification, and empathy.",
                     weight=1.0,
                     min_score=0,
                     max_score=10,
                     is_required=True,
                     display_order=1,
                 )
+                # Seed default extraction sections for detailed call analysis
+                default_sections = [
+                    ("Call Summary & Purpose", "Extract primary reason for call, call category, and summary of interaction."),
+                    ("Customer Sentiment", "Extract customer emotional state, sentiment trajectory (e.g. Frustrated to Satisfied), and key emotional phrases."),
+                    ("Issue Details & Product", "Extract issue description, product/service name, ticket/order ID, and root cause."),
+                    ("Resolution & Status", "Extract exact resolution provided, resolution status (Resolved/Unresolved/Escalated), and promised ETA."),
+                    ("Follow-up & Commitments", "Extract any commitments made by agent or customer (callbacks, refunds, email sent) with deadlines."),
+                    ("Hold & Transfer Details", "Extract if customer was put on hold, hold duration, transfer status, and reason for transfer."),
+                    ("Compliance & Verification", "Extract customer authentication method, identity verification status, and disclosure compliance."),
+                    ("Quality Flags & Escalations", "Extract any red flags: cancellation threats, legal/supervisor mentions, rude behavior, or policy violations."),
+                ]
+                for idx, (s_name, s_inst) in enumerate(default_sections, start=1):
+                    await self.template_repo.add_section(
+                        template_id=new_tpl.id,
+                        name=s_name,
+                        ai_instructions=s_inst,
+                        display_order=idx,
+                    )
                 template = await self.template_repo.get_by_id(new_tpl.id, organization_id)
 
         run = await self.transcript_repo.create_analysis_run(
@@ -146,15 +203,12 @@ class AnalysisService:
             created_by=user_id or transcript.created_by,
         )
 
-        # Run the evaluation inline on the same session, then return the fully
-        # populated run. Re-fetch via get_analysis_run() so parameter_results /
-        # section_results are eager-loaded (selectinload) for the response - the
-        # bare object from create_analysis_run() doesn't have them loaded, and
-        # accessing them lazily during Pydantic validation raises MissingGreenlet.
-        await self.execute_analysis_job(run.id, organization_id)
+        # Launch non-blocking background task with independent DB session
+        import asyncio
+        asyncio.create_task(run_async_analysis_job(run.id, organization_id))
 
         refreshed_run = await self.transcript_repo.get_analysis_run(run.id, organization_id)
-        return AnalysisRunResponse.model_validate(refreshed_run)
+        return AnalysisRunResponse.model_validate(refreshed_run or run)
 
     async def execute_analysis_job(self, run_id: uuid.UUID, organization_id: uuid.UUID) -> None:
         run = await self.transcript_repo.get_analysis_run(run_id, organization_id)

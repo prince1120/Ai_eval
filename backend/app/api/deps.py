@@ -65,6 +65,11 @@ def get_stt_service() -> STTService:
     return STTService()
 
 
+def get_storage_service():
+    from app.services.storage_service import MinIOStorageService
+    return MinIOStorageService()
+
+
 def get_prompt_builder_service(
     llm_client: LLMClient = Depends(get_llm_client),
 ) -> PromptBuilderService:

@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.limiter import limiter
-from app.api.deps import get_current_user, require_role, get_analysis_service, get_stt_service
+from app.api.deps import (
+    get_current_user,
+    require_role,
+    get_analysis_service,
+    get_stt_service,
+    get_storage_service,
+)
 from app.models.user import User
 from app.schemas.transcript import (
     TranscriptCreate,
@@ -17,6 +23,7 @@ from app.schemas.transcript import (
 )
 from app.services.analysis_service import AnalysisService
 from app.services.stt_service import STTService
+from app.services.storage_service import MinIOStorageService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcripts", tags=["Transcripts"])
@@ -50,11 +57,12 @@ async def upload_and_transcribe_audio(
     current_user: User = Depends(require_role(["admin", "evaluator"])),
     stt_service: STTService = Depends(get_stt_service),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    storage_service: MinIOStorageService = Depends(get_storage_service),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Upload call audio file (.mp3, .wav, .m4a), transcribe with Whisper STT, and create transcript."""
+    """Upload call audio file (.mp3, .wav, .m4a), transcribe with Whisper STT, store in MinIO, and create transcript."""
     filename = file.filename or "uploaded_call.mp3"
-    extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ".mp3"
     if extension not in ALLOWED_AUDIO_EXTENSIONS or (
         file.content_type and file.content_type not in ALLOWED_AUDIO_CONTENT_TYPES
     ):
@@ -74,12 +82,27 @@ async def upload_and_transcribe_audio(
         file_bytes=file_bytes, filename=filename
     )
 
+    # Store audio file in MinIO
+    audio_key = f"{current_user.organization_id}/{uuid.uuid4()}{extension}"
+    audio_file_key: Optional[str] = None
+    try:
+        audio_file_key = await storage_service.upload_audio(
+            key=audio_key,
+            file_bytes=file_bytes,
+            content_type=file.content_type or "audio/mpeg",
+        )
+    except Exception as err:
+        logger.warning(f"MinIO audio upload failed: {err}")
+
     transcript = await analysis_service.create_transcript(
         organization_id=current_user.organization_id,
         req=TranscriptCreate(
             raw_text=stt_res["raw_text"],
             source_call_id=file.filename,
             speaker_segments={"diarized_text": stt_res["diarized_text"]},
+            audio_file_key=audio_file_key,
+            detected_language=stt_res.get("detected_language"),
+            audio_duration_seconds=stt_res.get("audio_duration_seconds"),
         ),
         user_id=current_user.id,
     )
@@ -89,7 +112,7 @@ async def upload_and_transcribe_audio(
         from app.repositories.llm_cost_repository import LLMCostRepository
         cost_repo = LLMCostRepository(db)
 
-        # 1. Log Groq Whisper STT (billed per audio-second, not per token - see stt_service.py)
+        # 1. Log Groq Whisper STT
         stt_usage = stt_res.get("stt_usage", {})
         await cost_repo.log_request(
             organization_id=current_user.organization_id,
@@ -159,15 +182,36 @@ async def get_transcript(
     )
 
 
+@router.get("/{id}/audio")
+async def get_transcript_audio_url(
+    id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+    storage_service: MinIOStorageService = Depends(get_storage_service),
+):
+    """Get presigned URL for playing audio recording stored in MinIO."""
+    t = await analysis_service.get_transcript(
+        organization_id=current_user.organization_id, transcript_id=id
+    )
+    if not t.audio_file_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No audio recording attached to this transcript.",
+        )
+    url = await storage_service.get_presigned_url(t.audio_file_key, expiry_seconds=3600)
+    return {"url": url, "expires_in": 3600}
+
+
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_transcript(
     id: uuid.UUID,
     current_user: User = Depends(require_role(["admin"])),
     analysis_service: AnalysisService = Depends(get_analysis_service),
+    storage_service: MinIOStorageService = Depends(get_storage_service),
 ):
-    """Delete a transcript (Admin only)."""
+    """Delete a transcript and remove its audio recording from MinIO (Admin only)."""
     await analysis_service.delete_transcript(
-        organization_id=current_user.organization_id, transcript_id=id
+        organization_id=current_user.organization_id, transcript_id=id, storage_service=storage_service
     )
 
 
