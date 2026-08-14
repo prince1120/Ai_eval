@@ -254,7 +254,12 @@ class TemplateService:
             template.is_active = False
             await self.template_repo.update_template(template)
 
-            for p in template.parameters:
+            # Carry over whatever the caller sent; fall back to the previous
+            # version's criteria only when the request omits them entirely.
+            source_params = req.parameters if req.parameters is not None else template.parameters
+            source_sections = req.sections if req.sections is not None else template.sections
+
+            for idx, p in enumerate(source_params, start=1):
                 await self.template_repo.add_parameter(
                     template_id=new_template.id,
                     name=p.name,
@@ -264,16 +269,16 @@ class TemplateService:
                     min_score=p.min_score,
                     max_score=p.max_score,
                     is_required=p.is_required,
-                    display_order=p.display_order,
+                    display_order=getattr(p, "display_order", None) or idx,
                 )
 
-            for s in template.sections:
+            for idx, s in enumerate(source_sections, start=1):
                 await self.template_repo.add_section(
                     template_id=new_template.id,
                     name=s.name,
                     description=s.description,
                     ai_instructions=s.ai_instructions,
-                    display_order=s.display_order,
+                    display_order=getattr(s, "display_order", None) or idx,
                 )
 
             refreshed = await self.template_repo.get_by_id(new_template.id, organization_id)
@@ -283,8 +288,83 @@ class TemplateService:
                 template.name = req.name
             if req.description is not None:
                 template.description = req.description
-            updated = await self.template_repo.update_template(template)
-            return TemplateResponse.model_validate(updated)
+
+            if req.parameters is not None:
+                await self._sync_parameters(template, req.parameters)
+            if req.sections is not None:
+                await self._sync_sections(template, req.sections)
+
+            await self.template_repo.update_template(template)
+            refreshed = await self.template_repo.get_by_id(template.id, organization_id)
+            return TemplateResponse.model_validate(refreshed)
+
+    async def _sync_parameters(self, template, incoming) -> None:
+        """Make the template's parameters match the submitted list exactly.
+
+        Matched by id so existing rows are updated in place: deleting and
+        recreating would null out parameter_results.parameter_id on every
+        historical run that referenced them.
+        """
+        existing = {p.id: p for p in template.parameters}
+        seen: set = set()
+
+        for idx, item in enumerate(incoming, start=1):
+            order = item.display_order or idx
+            current = existing.get(item.id) if item.id else None
+            if current is not None:
+                current.name = item.name
+                current.description = item.description
+                current.ai_instructions = item.ai_instructions
+                current.weight = item.weight
+                current.min_score = item.min_score
+                current.max_score = item.max_score
+                current.is_required = item.is_required
+                current.display_order = order
+                seen.add(current.id)
+            else:
+                # No id, or an id the editor generated client-side for a row
+                # that was never persisted.
+                await self.template_repo.add_parameter(
+                    template_id=template.id,
+                    name=item.name,
+                    description=item.description,
+                    ai_instructions=item.ai_instructions,
+                    weight=item.weight,
+                    min_score=item.min_score,
+                    max_score=item.max_score,
+                    is_required=item.is_required,
+                    display_order=order,
+                )
+
+        for param_id, param in existing.items():
+            if param_id not in seen:
+                await self.template_repo.delete_parameter(param)
+
+    async def _sync_sections(self, template, incoming) -> None:
+        existing = {s.id: s for s in template.sections}
+        seen: set = set()
+
+        for idx, item in enumerate(incoming, start=1):
+            order = item.display_order or idx
+            current = existing.get(item.id) if item.id else None
+            if current is not None:
+                current.name = item.name
+                current.description = item.description
+                current.ai_instructions = item.ai_instructions
+                current.display_order = order
+                seen.add(current.id)
+            else:
+                await self.template_repo.add_section(
+                    template_id=template.id,
+                    name=item.name,
+                    description=item.description,
+                    ai_instructions=item.ai_instructions,
+                    display_order=order,
+                )
+
+        for section_id, section in existing.items():
+            if section_id not in seen:
+                await self.template_repo.delete_section(section)
 
     async def activate_template(
         self, organization_id: uuid.UUID, template_id: uuid.UUID

@@ -3,6 +3,7 @@ from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db_session
 from app.models.user import User
 from app.api.deps import require_role
@@ -20,7 +21,13 @@ async def get_llm_summary_stats(
 ):
     """Get aggregated LLM token usage and USD spend summary stats for the organization (Admin-Only)."""
     cost_repo = LLMCostRepository(db)
-    return await cost_repo.get_summary_stats(current_user.organization_id, user_id=user_id, date_preset=date_preset)
+    summary = await cost_repo.get_summary_stats(
+        current_user.organization_id, user_id=user_id, date_preset=date_preset
+    )
+    # Ship the rate with the data so every figure on the dashboard converts
+    # against the same number instead of a constant duplicated in the frontend.
+    summary["usd_to_inr_rate"] = settings.USD_TO_INR_RATE
+    return summary
 
 
 @router.get("/llm-breakdown", response_model=List[Dict[str, Any]])

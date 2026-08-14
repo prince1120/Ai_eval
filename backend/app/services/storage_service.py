@@ -26,6 +26,32 @@ class MinIOStorageService:
             secret_key=settings.MINIO_SECRET_KEY,
             secure=settings.MINIO_SECURE,
         )
+        # Presigned URLs are opened by the browser, not by this process, so
+        # they must be signed against the host the browser can actually reach.
+        # The AWS v4 signature covers the host header, so rewriting the URL
+        # after signing would invalidate it - a second client is needed.
+        public_endpoint = settings.MINIO_PUBLIC_ENDPOINT or settings.MINIO_ENDPOINT
+        public_secure = (
+            settings.MINIO_PUBLIC_SECURE
+            if settings.MINIO_PUBLIC_SECURE is not None
+            else settings.MINIO_SECURE
+        )
+        self._public_client = (
+            self._client
+            if public_endpoint == settings.MINIO_ENDPOINT
+            and public_secure == settings.MINIO_SECURE
+            else Minio(
+                endpoint=public_endpoint,
+                access_key=settings.MINIO_ACCESS_KEY,
+                secret_key=settings.MINIO_SECRET_KEY,
+                secure=public_secure,
+                # Pinned so the SDK never makes a live region lookup against
+                # the public host - that host is only reachable from the
+                # browser, not from inside this container, and the lookup would
+                # fail with connection refused before any URL was signed.
+                region=settings.MINIO_REGION,
+            )
+        )
         self._bucket = settings.MINIO_BUCKET
 
     def _ensure_bucket_sync(self) -> None:
@@ -67,8 +93,26 @@ class MinIOStorageService:
         logger.info(f"MinIO: Uploaded audio '{stored_key}' ({len(file_bytes)} bytes)")
         return stored_key
 
+    def _download_sync(self, key: str) -> bytes:
+        response = None
+        try:
+            response = self._client.get_object(bucket_name=self._bucket, object_name=key)
+            return response.read()
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
+    async def download_audio(self, key: str) -> bytes:
+        """Fetch a stored recording. Used by the transcription worker, which
+        runs in a separate process from the upload request and so only ever
+        has the object key, never the original bytes."""
+        data = await asyncio.to_thread(self._download_sync, key)
+        logger.info(f"MinIO: Downloaded audio '{key}' ({len(data)} bytes)")
+        return data
+
     def _presigned_url_sync(self, key: str, expiry_seconds: int) -> str:
-        url = self._client.presigned_get_object(
+        url = self._public_client.presigned_get_object(
             bucket_name=self._bucket,
             object_name=key,
             expires=timedelta(seconds=expiry_seconds),

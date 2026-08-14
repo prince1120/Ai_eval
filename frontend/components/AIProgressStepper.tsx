@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
 import {
   CheckCircle2,
   Loader2,
@@ -18,6 +20,15 @@ interface AIProgressStepperProps {
 }
 
 export function AIProgressStepper({ status }: AIProgressStepperProps) {
+  // Cached for the session - the configured models do not change mid-upload,
+  // and a failed lookup just falls back to generic labels below.
+  const { data: models } = useQuery<any>({
+    queryKey: ["active-models"],
+    queryFn: () => apiFetch("/models"),
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+
   const [activeStep, setActiveStep] = useState(1);
   const [secondsElapsed, setSecondsElapsed] = useState(0);
 
@@ -47,6 +58,12 @@ export function AIProgressStepper({ status }: AIProgressStepperProps) {
     }
   }, [status]);
 
+  // Named from the live backend config rather than hardcoded, so the steps
+  // never claim a model that is no longer the one doing the work.
+  const sttModel = models?.transcription?.model ?? "Whisper";
+  const diarModel = models?.diarization?.model ?? "LLM";
+  const evalModel = models?.evaluation?.model ?? "LLM";
+
   const steps = [
     {
       id: 1,
@@ -56,19 +73,19 @@ export function AIProgressStepper({ status }: AIProgressStepperProps) {
     },
     {
       id: 2,
-      title: "Groq Whisper STT & Language Detection",
+      title: `Speech-to-Text (${sttModel})`,
       desc: "Transcribing audio & identifying spoken languages",
       icon: Globe,
     },
     {
       id: 3,
-      title: "Mistral Speaker Diarization",
+      title: `Speaker Attribution (${diarModel})`,
       desc: "Separating Agent vs Customer dialogue turns",
       icon: MessageSquare,
     },
     {
       id: 4,
-      title: "Scorecard Parameter Evaluation",
+      title: `Scorecard Evaluation (${evalModel})`,
       desc: "Evaluating quality parameters & extracting key insights",
       icon: Cpu,
     },

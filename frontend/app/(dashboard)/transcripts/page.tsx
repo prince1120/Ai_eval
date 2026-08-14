@@ -41,6 +41,39 @@ import {
   ChevronDown,
 } from "lucide-react";
 
+
+// A queued transcription can sit behind a provider rate limit for a while, so
+// poll generously rather than failing the upload the moment it is slow.
+const TRANSCRIPTION_POLL_MS = 2000;
+const TRANSCRIPTION_TIMEOUT_MS = 15 * 60 * 1000;
+
+async function waitForTranscription(
+  transcriptId: string,
+  onStatus?: (status: string) => void
+): Promise<any> {
+  const deadline = Date.now() + TRANSCRIPTION_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const t: any = await apiFetch(`/transcripts/${transcriptId}`);
+    onStatus?.(t.status);
+
+    if (t.status === "transcription_failed") {
+      throw new Error(
+        "Transcription failed for this recording. Open the call and use Retry Transcription."
+      );
+    }
+    // "completed" covers transcripts created before the queue existed.
+    if (t.status === "transcribed" || t.status === "completed") {
+      return t;
+    }
+    await new Promise((r) => setTimeout(r, TRANSCRIPTION_POLL_MS));
+  }
+
+  throw new Error(
+    "Still transcribing - it is taking longer than usual. The call will appear in the list when it finishes."
+  );
+}
+
 export default function TranscriptsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -122,47 +155,41 @@ export default function TranscriptsPage() {
         setCurrentFileProcessingName(file.name);
         setCurrentProcessingStep(1);
 
-        const timer1 = setTimeout(() => {
-          setCurrentProcessingStep(2);
-        }, 1200);
-
-        const timer2 = setTimeout(() => {
-          setCurrentProcessingStep(3);
-        }, 3500);
-
         const formData = new FormData();
         formData.append("file", file);
         if (templateIdToUse) {
           formData.append("template_id", templateIdToUse);
         }
 
-        try {
-          lastCreatedTranscript = await apiFetch(
-            `/transcripts/upload-audio?auto_analyze=${autoAnalyze}`,
-            {
-              method: "POST",
-              body: formData,
-            }
-          );
-          setCurrentProcessingStep(3);
-        } finally {
-          clearTimeout(timer1);
-          clearTimeout(timer2);
-        }
+        // Upload returns 202 as soon as the recording is stored; the actual
+        // transcription runs in a worker and may be queued behind a provider
+        // rate limit. Poll the real status instead of guessing with timers.
+        const created: any = await apiFetch(
+          `/transcripts/upload-audio?auto_analyze=${autoAnalyze}`,
+          { method: "POST", body: formData }
+        );
+        setCurrentProcessingStep(2);
+
+        lastCreatedTranscript = await waitForTranscription(created.id, (status) => {
+          if (status === "transcribing") setCurrentProcessingStep(2);
+          else if (status === "transcribed" || status === "completed")
+            setCurrentProcessingStep(3);
+        });
       }
 
       return lastCreatedTranscript;
     },
     onSuccess: (lastCreatedTranscript: any) => {
       setCurrentProcessingStep(4);
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["transcripts"] });
-        queryClient.invalidateQueries({ queryKey: ["analysis-runs"] });
-        closeModal();
-        if (lastCreatedTranscript && lastCreatedTranscript.id) {
-          router.push(`/transcripts/${lastCreatedTranscript.id}`);
-        }
-      }, 500);
+      queryClient.invalidateQueries({ queryKey: ["transcripts"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis-runs"] });
+      // Navigate first, then tear down the modal. Closing it before the route
+      // change left the transcripts list visible for a beat, which read as the
+      // app flashing an unrelated screen between "done" and the report.
+      if (lastCreatedTranscript?.id) {
+        router.push(`/transcripts/${lastCreatedTranscript.id}`);
+      }
+      closeModal();
     },
     onError: (err: any) => {
       setUploadError(err.message || "Upload error");

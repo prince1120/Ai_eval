@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { formatToUserLocalTime } from "@/lib/date-utils";
 import { TranscriptDetailSkeleton } from "@/components/TranscriptDetailSkeleton";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import {
   FileText,
   PlayCircle,
@@ -25,6 +26,9 @@ import {
   MessageSquare,
   AlignLeft,
   Check,
+  RefreshCw,
+  Loader2,
+  Mic,
 } from "lucide-react";
 
 export default function TranscriptDetailPage() {
@@ -53,6 +57,13 @@ export default function TranscriptDetailPage() {
   const { data: transcript, isLoading } = useQuery<any>({
     queryKey: ["transcript", transcriptId],
     queryFn: () => apiFetch(`/transcripts/${transcriptId}`),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && (data.status === "queued" || data.status === "transcribing")) {
+        return 2000;
+      }
+      return false;
+    },
   });
 
   const { data: runs = [] } = useQuery<any[]>({
@@ -68,7 +79,6 @@ export default function TranscriptDetailPage() {
       return false;
     },
   });
-
 
   const { data: templates = [] } = useQuery<any[]>({
     queryKey: ["templates"],
@@ -97,6 +107,21 @@ export default function TranscriptDetailPage() {
     },
     onError: (err: any) => {
       setAnalyzeError(err.message || "Failed to run AI evaluation");
+    },
+  });
+
+  const retryTranscriptionMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/transcripts/${transcriptId}/retry-transcription`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      setAnalyzeError("");
+      queryClient.invalidateQueries({ queryKey: ["transcript", transcriptId] });
+      queryClient.invalidateQueries({ queryKey: ["transcripts"] });
+    },
+    onError: (err: any) => {
+      setAnalyzeError(err.message || "Failed to re-queue transcription");
     },
   });
 
@@ -393,7 +418,7 @@ export default function TranscriptDetailPage() {
 
           <button
             onClick={() => analyzeMutation.mutate(selectedTemplateId || activeTemplate?.id)}
-            disabled={analyzeMutation.isPending}
+            disabled={analyzeMutation.isPending || transcript.status === "queued" || transcript.status === "transcribing" || transcript.status === "transcription_failed"}
             className="flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 transition-all shrink-0 w-full sm:w-auto"
           >
             <PlayCircle className="h-4 w-4" />
@@ -401,6 +426,57 @@ export default function TranscriptDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Transcription In-Progress Alert */}
+      {(transcript.status === "queued" || transcript.status === "transcribing") && (
+        <div className="rounded-2xl border border-teal-200 bg-teal-50/70 p-6 flex items-center gap-4 shadow-xs">
+          <div className="p-3 rounded-2xl bg-teal-100 text-teal-700">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              {transcript.status === "queued" ? "Transcription Queued" : "Transcribing Audio Recording..."}
+            </h3>
+            <p className="text-xs text-teal-700 mt-0.5">
+              Groq Whisper AI is transcribing and diarizing this call recording. This page will update automatically.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Transcription Failed Alert & Retry Action */}
+      {transcript.status === "transcription_failed" && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-2xl bg-rose-100 text-rose-700">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Transcription Failed</h3>
+              <p className="text-xs text-rose-700 mt-0.5">
+                The speech-to-text processing for this recording failed or timed out.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => retryTranscriptionMutation.mutate()}
+            disabled={retryTranscriptionMutation.isPending}
+            className="flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-teal-700 disabled:opacity-60 transition-all shrink-0"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${retryTranscriptionMutation.isPending ? "animate-spin" : ""}`} />
+            {retryTranscriptionMutation.isPending ? "Re-queueing..." : "Retry Transcription"}
+          </button>
+        </div>
+      )}
+
+      {/* Audio Player (if transcript has recording) */}
+      {transcript.id && (transcript.audio_file_key || transcript.audio_duration_seconds) && (
+        <AudioPlayer
+          transcriptId={transcript.id}
+          detectedLanguage={transcript.detected_language}
+          durationSeconds={transcript.audio_duration_seconds}
+        />
+      )}
 
       {/* Historical Analysis Runs Cards */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 space-y-4 shadow-sm">

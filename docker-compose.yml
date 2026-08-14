@@ -15,17 +15,98 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    # Job state must survive a restart, otherwise queued transcriptions are
+    # lost - the exact failure the queue exists to prevent.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # 6380 on the host: 6379 is commonly already taken by another project's
+      # Redis. Services inside the compose network still use 6379.
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Audio object storage. The app has depended on this since audio upload was
+  # added, but it was never declared here, so `docker compose up` produced a
+  # stack that could not accept a single recording.
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   backend:
     build: ./backend
     env_file:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/transcript_eval
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      # The browser resolves this one, not "minio". Change the host if you
+      # access the app from another machine on the LAN.
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/transcript_eval
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
+    # Migrations are the API container's job; the worker just consumes.
+    command: ["arq", "app.workers.jobs.WorkerSettings"]
+    # The image's HEALTHCHECK probes an HTTP port this container never serves,
+    # so inheriting it would mark a perfectly healthy worker as unhealthy.
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3001:3001"
+    # The browser calls the API directly on localhost:8000, so the frontend
+    # container never needs to reach the backend over the compose network.
+    # depends_on is only here so `up` starts them in a sensible order.
+    depends_on:
+      - backend
 
 volumes:
   db_data:
+  redis_data:
+  minio_data:

@@ -46,6 +46,13 @@ class TemplateRepository:
                 EvaluationTemplate.id == template_id,
                 EvaluationTemplate.organization_id == organization_id,
             )
+            # Without populate_existing, a template already in the session's
+            # identity map is returned with its previously loaded collections
+            # untouched - so a re-fetch straight after adding parameters hands
+            # back the stale, empty list. Callers must flush before calling
+            # this (update_template does), since this discards unflushed
+            # in-memory changes on the returned object.
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 

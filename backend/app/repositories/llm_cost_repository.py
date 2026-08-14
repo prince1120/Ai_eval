@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
@@ -7,17 +8,25 @@ from sqlalchemy.orm import selectinload
 
 from app.models.llm_cost_log import LLMCostLog
 
+logger = logging.getLogger(__name__)
+
 
 # Official API Rate Matrix (USD per 1 Million Tokens)
 # Format: model_name -> (Input USD / 1M, Output USD / 1M)
 MODEL_PRICING = {
     # --- Mistral AI Models ---
+    # Verified against https://mistral.ai/pricing/api on 2026-08-13.
+    # ministral-8b was previously recorded here as 0.10/0.10; it is 0.15/0.15,
+    # so every 8B row logged before this date under-reports by a third.
     "ministral-3b-2512": (0.10, 0.10),
     "ministral-3b": (0.10, 0.10),
-    "ministral-8b-2410": (0.10, 0.10),
-    "ministral-8b": (0.10, 0.10),
+    "ministral-8b-2410": (0.15, 0.15),
+    "ministral-8b": (0.15, 0.15),
+    "ministral-14b": (0.20, 0.20),
     "mistral-small-latest": (0.15, 0.60),
     "mistral-small": (0.15, 0.60),
+    "mistral-medium-latest": (1.50, 7.50),
+    "mistral-medium": (1.50, 7.50),
     "mistral-large-latest": (0.50, 1.50),
     "mistral-large": (0.50, 1.50),
     "codestral-latest": (0.20, 0.60),
@@ -42,9 +51,19 @@ MODEL_PRICING = {
     "claude-3-opus-20240229": (15.00, 75.00),
 
     # --- Groq & STT Models ---
-    "whisper-large-v3-turbo": (0.04, 0.04),
+    # STT is billed per audio-second, not per token; these entries exist only
+    # so the model name resolves. Actual STT cost is passed in via
+    # override_total_cost_usd from whisper_cost_usd().
+    "whisper-large-v3": (0.0, 0.0),
+    "whisper-large-v3-turbo": (0.0, 0.0),
+    "distil-whisper-large-v3-en": (0.0, 0.0),
     "llama-3.3-70b-versatile": (0.59, 0.79),
     "llama-3.1-8b-instant": (0.05, 0.08),
+    "openai/gpt-oss-20b": (0.075, 0.30),
+    "gpt-oss-20b": (0.075, 0.30),
+    "openai/gpt-oss-120b": (0.15, 0.60),
+    "gpt-oss-120b": (0.15, 0.60),
+    "qwen3-32b": (0.29, 0.59),
 
     # --- Google Gemini Models ---
     "gemini-2.0-flash": (0.10, 0.40),
@@ -53,6 +72,24 @@ MODEL_PRICING = {
 }
 
 DEFAULT_PRICING = (0.10, 0.30)
+
+# Base URL fragment -> provider label, so cost rows are attributed to whoever
+# actually served the request rather than a hardcoded guess.
+PROVIDER_BY_HOST = {
+    "groq.com": "groq",
+    "mistral.ai": "mistral",
+    "openai.com": "openai",
+    "anthropic.com": "anthropic",
+    "googleapis.com": "google",
+}
+
+
+def _provider_from_base_url(base_url: Optional[str]) -> str:
+    host = (base_url or "").lower()
+    for fragment, provider in PROVIDER_BY_HOST.items():
+        if fragment in host:
+            return provider
+    return "unknown"
 
 
 def calculate_llm_cost(model_name: str, prompt_tokens: int, completion_tokens: int) -> Dict[str, float]:
@@ -67,6 +104,12 @@ def calculate_llm_cost(model_name: str, prompt_tokens: int, completion_tokens: i
                 break
 
     if not rate:
+        # Falling back silently would report confident-looking but wrong spend,
+        # which is worse than no number at all. Make it visible in the logs.
+        logger.warning(
+            f"No pricing entry for model '{model_name}'; falling back to "
+            f"{DEFAULT_PRICING} USD/1M tokens. Add it to MODEL_PRICING."
+        )
         rate = DEFAULT_PRICING
 
     input_rate, output_rate = rate

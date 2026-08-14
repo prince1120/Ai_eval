@@ -13,3 +13,6 @@ openai>=1.30.0
 python-multipart>=0.0.9
 slowapi>=0.1.9
 minio>=7.2.0
+# Job queue: async-native worker so STT/LLM calls stay off the request path
+arq>=0.26.0
+redis>=5.0.0

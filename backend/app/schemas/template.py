@@ -85,9 +85,29 @@ class TemplateCreate(TemplateBase):
     sections: Optional[List[SectionCreate]] = []
 
 
+class ParameterSync(ParameterBase):
+    """A parameter in a full-template save.
+
+    `id` is present for parameters that already exist so they can be updated in
+    place rather than deleted and recreated, which would break the
+    parameter_results foreign key on historical runs.
+    """
+
+    id: Optional[uuid.UUID] = None
+
+
+class SectionSync(SectionBase):
+    id: Optional[uuid.UUID] = None
+
+
 class TemplateUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = None
+    # Omit to leave the existing set untouched; send a list to replace it
+    # wholesale. The editor always sends the complete desired list, so anything
+    # absent from it has been deleted by the user.
+    parameters: Optional[List[ParameterSync]] = None
+    sections: Optional[List[SectionSync]] = None
 
 
 class TemplateResponse(TemplateBase):

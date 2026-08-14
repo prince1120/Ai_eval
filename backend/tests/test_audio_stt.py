@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 from app.core.config import settings
 from app.core.database import get_db_session
-from app.api.deps import get_stt_service, get_llm_client
+from app.api.deps import get_stt_service, get_llm_client, get_storage_service
 from app.main import app
 from app.models.base import Base
 from app.services.llm_client import LLMResult
@@ -38,6 +38,11 @@ async def override_get_db_stt():
 
 mock_stt_service = AsyncMock()
 mock_llm_stt = AsyncMock()
+# The upload endpoint now stores the recording before transcribing and returns
+# 503 if that fails, so the storage backend has to be stubbed rather than left
+# to reach a real MinIO.
+mock_storage_stt = AsyncMock()
+mock_storage_stt.upload_audio.return_value = "test-org/test-audio.wav"
 
 
 def override_stt():
@@ -48,6 +53,10 @@ def override_llm():
     return mock_llm_stt
 
 
+def override_storage():
+    return mock_storage_stt
+
+
 class TestAudioSTTIntegration(unittest.TestCase):
 
     @classmethod
@@ -55,6 +64,7 @@ class TestAudioSTTIntegration(unittest.TestCase):
         app.dependency_overrides[get_db_session] = override_get_db_stt
         app.dependency_overrides[get_stt_service] = override_stt
         app.dependency_overrides[get_llm_client] = override_llm
+        app.dependency_overrides[get_storage_service] = override_storage
 
         async def init_db():
             async with test_engine_stt.begin() as conn:

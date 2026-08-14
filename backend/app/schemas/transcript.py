@@ -12,6 +12,11 @@ class TranscriptCreate(BaseModel):
     audio_file_key: Optional[str] = None
     detected_language: Optional[str] = None
     audio_duration_seconds: Optional[float] = None
+    segments: Optional[List[Dict[str, Any]]] = None
+    stt_confidence: Optional[float] = None
+    stt_quality_flags: Optional[List[str]] = None
+    stt_model: Optional[str] = None
+    audio_sha256: Optional[str] = None
 
 
 class TranscriptResponse(BaseModel):
@@ -25,6 +30,10 @@ class TranscriptResponse(BaseModel):
     audio_file_key: Optional[str] = None
     detected_language: Optional[str] = None
     audio_duration_seconds: Optional[float] = None
+    segments: Optional[List[Dict[str, Any]]] = None
+    stt_confidence: Optional[float] = None
+    stt_quality_flags: Optional[List[str]] = None
+    stt_model: Optional[str] = None
     created_at: datetime
     creator: Optional[UserResponse] = None
 

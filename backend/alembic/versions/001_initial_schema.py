@@ -95,12 +95,14 @@ def upgrade() -> None:
         'transcripts',
         sa.Column('id', sa.UUID(), nullable=False),
         sa.Column('organization_id', sa.UUID(), nullable=False),
+        sa.Column('created_by', sa.UUID(), nullable=True),
         sa.Column('source_call_id', sa.String(length=255), nullable=True),
         sa.Column('raw_text', sa.Text(), nullable=False),
         sa.Column('speaker_segments', sa.JSON(), nullable=True),
         sa.Column('status', sa.String(length=50), nullable=False, server_default='uploaded'),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['created_by'], ['users.id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_transcripts_organization_id'), 'transcripts', ['organization_id'], unique=False)
@@ -111,7 +113,8 @@ def upgrade() -> None:
         sa.Column('id', sa.UUID(), nullable=False),
         sa.Column('organization_id', sa.UUID(), nullable=False),
         sa.Column('transcript_id', sa.UUID(), nullable=False),
-        sa.Column('template_id', sa.UUID(), nullable=False),
+        sa.Column('template_id', sa.UUID(), nullable=True),
+        sa.Column('created_by', sa.UUID(), nullable=True),
         sa.Column('template_version', sa.Integer(), nullable=False),
         sa.Column('overall_score', sa.Float(), nullable=True),
         sa.Column('status', sa.String(length=50), nullable=False, server_default='pending'),
@@ -122,8 +125,9 @@ def upgrade() -> None:
         sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['template_id'], ['evaluation_templates.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['template_id'], ['evaluation_templates.id'], ondelete='SET NULL'),
         sa.ForeignKeyConstraint(['transcript_id'], ['transcripts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['created_by'], ['users.id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_analysis_runs_organization_id'), 'analysis_runs', ['organization_id'], unique=False)

@@ -1,15 +1,31 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
 RUN python -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 
+# requirements.txt is copied before the app code so this layer stays cached
+# across ordinary code changes.
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# The BuildKit cache mount persists pip's *download* cache between builds, so
+# adding or bumping one package no longer re-downloads every wheel. The mount
+# lives outside the image, so this costs nothing in final image size - which is
+# why --no-cache-dir is deliberately absent here.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip \
+    && pip install -r requirements.txt
 
 
 FROM python:3.12-slim
+
+# ffmpeg powers the audio preprocessing in app/services/audio_service.py:
+# transcoding to 16 kHz mono Opus, silence detection for chunk boundaries, and
+# cutting chunks that would otherwise exceed the STT provider's size limit.
+# The alternative for silence detection (Silero VAD) needs torch at ~800 MB.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system app && adduser --system --ingroup app app
 WORKDIR /app

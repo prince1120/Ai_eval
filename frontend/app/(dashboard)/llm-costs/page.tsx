@@ -36,6 +36,7 @@ export default function LLMCostsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
+  const [showInr, setShowInr] = useState(true);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedDatePreset, setSelectedDatePreset] = useState<string>("all");
@@ -110,8 +111,23 @@ export default function LLMCostsPage() {
     return <LLMCostsSkeleton />;
   }
 
-  const formatUsd = (val: number | undefined) => {
-    if (val === undefined || val === null) return "$0.000000";
+  // Provider bills arrive in USD; the rate comes from the API so the whole
+  // dashboard converts against one number rather than a constant duplicated
+  // here that would silently drift from the backend's.
+  const usdToInr = summary?.usd_to_inr_rate ?? 95.3;
+
+  const currencyLabel = showInr ? "INR" : "USD";
+
+  const formatMoney = (val: number | undefined) => {
+    if (val === undefined || val === null) {
+      return showInr ? "₹0.0000" : "$0.000000";
+    }
+    if (showInr) {
+      const inr = val * usdToInr;
+      // Per-call costs land in fractions of a paisa, so small amounts keep
+      // four decimals rather than rounding away to a meaningless zero.
+      return `₹${inr < 1 ? inr.toFixed(4) : inr.toFixed(2)}`;
+    }
     return `$${val.toFixed(6)}`;
   };
 
@@ -168,6 +184,35 @@ export default function LLMCostsPage() {
 
         {/* Filters Bar - Stacked on Mobile, Inline on Desktop */}
         <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 sm:gap-3 w-full pt-1">
+          {/* Currency Toggle */}
+          <div className="flex items-center justify-between sm:justify-start gap-2 rounded-xl bg-white px-3 py-2 border border-slate-200 shadow-xs w-full sm:w-auto">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-700 shrink-0">
+              <DollarSign className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>Currency:</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowInr((v) => !v)}
+              aria-pressed={showInr}
+              title={`Showing ${showInr ? "INR" : "USD"} - click to switch (1 USD = ${usdToInr} INR)`}
+              className="relative inline-flex items-center rounded-lg bg-slate-100 p-0.5 text-xs font-extrabold"
+            >
+              <span
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  !showInr ? "bg-white text-emerald-700 shadow-xs" : "text-slate-500"
+                }`}
+              >
+                USD
+              </span>
+              <span
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  showInr ? "bg-white text-emerald-700 shadow-xs" : "text-slate-500"
+                }`}
+              >
+                INR
+              </span>
+            </button>
+          </div>
           {/* Date Filter Dropdown */}
           <div className="flex items-center justify-between sm:justify-start gap-2 rounded-xl bg-white px-3 py-2 border border-slate-200 shadow-xs w-full sm:w-auto">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-700 shrink-0">
@@ -221,14 +266,14 @@ export default function LLMCostsPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xs relative overflow-hidden">
           <div className="flex items-center justify-between">
             <span className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">
-              Total USD Spend
+              Total Spend ({currencyLabel})
             </span>
             <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
               <DollarSign className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
           </div>
           <p className="mt-2 sm:mt-3 text-2xl sm:text-3xl font-black text-slate-900">
-            {isLoadingSummary ? "..." : formatUsd(summary?.total_spend_usd)}
+            {isLoadingSummary ? "..." : formatMoney(summary?.total_spend_usd)}
           </p>
           <p className="mt-1 text-[10px] sm:text-[11px] text-slate-400 font-medium">
             {selectedDatePreset !== "all" || selectedUserId ? "Filtered spend calculation" : "Calculated across all LLM & STT calls"}
@@ -316,7 +361,7 @@ export default function LLMCostsPage() {
                   <th className="py-2.5 px-3">Provider</th>
                   <th className="py-2.5 px-3 text-center">Requests</th>
                   <th className="py-2.5 px-3 text-right">Total Tokens</th>
-                  <th className="py-2.5 px-3 text-right">Total Cost (USD)</th>
+                  <th className="py-2.5 px-3 text-right">Total Cost ({currencyLabel})</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -333,7 +378,7 @@ export default function LLMCostsPage() {
                     <td className="py-2.5 px-3 text-center font-bold">{formatNumber(row.request_count)}</td>
                     <td className="py-2.5 px-3 text-right font-mono">{formatNumber(row.total_tokens)}</td>
                     <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600 whitespace-nowrap">
-                      {formatUsd(row.total_cost_usd)}
+                      {formatMoney(row.total_cost_usd)}
                     </td>
                   </tr>
                 ))}
@@ -453,7 +498,7 @@ export default function LLMCostsPage() {
                       Tokens: <span className="text-slate-900 font-bold">{formatNumber(log.total_tokens)}</span> ({log.latency_ms}ms)
                     </div>
                     <div className="font-black text-emerald-700">
-                      {formatUsd(log.total_cost_usd)}
+                      {formatMoney(log.total_cost_usd)}
                     </div>
                   </div>
                 </div>
@@ -473,7 +518,7 @@ export default function LLMCostsPage() {
                     <th className="py-3 px-4 text-center">Prompt / Compl. Tokens</th>
                     <th className="py-3 px-4 text-center">Latency</th>
                     <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-right">Cost (USD)</th>
+                    <th className="py-3 px-4 text-right">Cost ({currencyLabel})</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -556,7 +601,7 @@ export default function LLMCostsPage() {
 
                       {/* Cost */}
                       <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
-                        {formatUsd(log.total_cost_usd)}
+                        {formatMoney(log.total_cost_usd)}
                       </td>
                     </tr>
                   ))}

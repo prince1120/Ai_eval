@@ -1,5 +1,6 @@
 import uuid
 import logging
+from collections import OrderedDict
 from typing import List, Optional, Any, Dict
 from fastapi import HTTPException, status
 
@@ -16,36 +17,24 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-# In-memory LRU cache for completed analysis runs (sub-5ms response time)
-COMPLETED_RUNS_CACHE: Dict[str, AnalysisRunResponse] = {}
+# Completed analysis runs are immutable, so caching them avoids re-hydrating
+# 59 parameter rows on every report view. Bounded and FIFO-evicted: the previous
+# plain dict was labelled "LRU" but had neither eviction nor a size limit, so it
+# grew until the process ran out of memory. Still per-worker, which is fine
+# because entries are immutable - a cache miss just costs one query.
+COMPLETED_RUNS_CACHE: "OrderedDict[str, AnalysisRunResponse]" = OrderedDict()
+COMPLETED_RUNS_CACHE_MAX = 256
 
 
-async def run_async_analysis_job(run_id: uuid.UUID, organization_id: uuid.UUID) -> None:
-    """Run an AI evaluation job in a non-blocking background task with its own independent DB session."""
-    from app.core.database import AsyncSessionLocal
-    from app.repositories.transcript_repository import TranscriptRepository
-    from app.repositories.template_repository import TemplateRepository
-    from app.services.llm_client import OpenAICompatibleClient
-    from app.services.prompt_builder_service import PromptBuilderService
+def _cache_completed_run(key: str, value: AnalysisRunResponse) -> None:
+    COMPLETED_RUNS_CACHE[key] = value
+    COMPLETED_RUNS_CACHE.move_to_end(key)
+    while len(COMPLETED_RUNS_CACHE) > COMPLETED_RUNS_CACHE_MAX:
+        COMPLETED_RUNS_CACHE.popitem(last=False)
 
-    async with AsyncSessionLocal() as session:
-        try:
-            transcript_repo = TranscriptRepository(session)
-            template_repo = TemplateRepository(session)
-            llm_client = OpenAICompatibleClient()
-            prompt_builder = PromptBuilderService(llm_client)
 
-            service = AnalysisService(
-                transcript_repo=transcript_repo,
-                template_repo=template_repo,
-                prompt_builder=prompt_builder,
-            )
-
-            await service.execute_analysis_job(run_id, organization_id)
-            await session.commit()
-        except Exception as err:
-            logger.exception(f"Background analysis task {run_id} failed: {err}")
-            await session.rollback()
+def invalidate_cached_run(organization_id: uuid.UUID, run_id: uuid.UUID) -> None:
+    COMPLETED_RUNS_CACHE.pop(f"{organization_id}:{run_id}", None)
 
 
 class AnalysisService:
@@ -72,9 +61,48 @@ class AnalysisService:
             audio_file_key=req.audio_file_key,
             detected_language=req.detected_language,
             audio_duration_seconds=req.audio_duration_seconds,
+            segments=req.segments,
+            stt_confidence=req.stt_confidence,
+            stt_quality_flags=req.stt_quality_flags,
+            stt_model=req.stt_model,
+            audio_sha256=req.audio_sha256,
         )
         refreshed = await self.transcript_repo.get_transcript(t.id, organization_id)
         return TranscriptResponse.model_validate(refreshed or t)
+
+    async def create_pending_audio_transcript(
+        self,
+        organization_id: uuid.UUID,
+        source_call_id: Optional[str],
+        audio_file_key: str,
+        audio_sha256: str,
+        user_id: Optional[uuid.UUID] = None,
+    ) -> TranscriptResponse:
+        """Create the transcript row for a recording awaiting transcription.
+
+        raw_text is empty until the worker fills it in, which is why this
+        bypasses TranscriptCreate (whose min_length guard is right for
+        text-submitted transcripts but wrong for queued audio).
+        """
+        t = await self.transcript_repo.create_transcript(
+            organization_id=organization_id,
+            raw_text="",
+            source_call_id=source_call_id,
+            created_by=user_id,
+            audio_file_key=audio_file_key,
+            audio_sha256=audio_sha256,
+            status="queued",
+        )
+        refreshed = await self.transcript_repo.get_transcript(t.id, organization_id)
+        return TranscriptResponse.model_validate(refreshed or t)
+
+    async def find_duplicate_audio(
+        self, organization_id: uuid.UUID, audio_sha256: str
+    ) -> Optional[TranscriptResponse]:
+        existing = await self.transcript_repo.find_by_audio_hash(
+            organization_id, audio_sha256
+        )
+        return TranscriptResponse.model_validate(existing) if existing else None
 
     async def get_transcript(
         self, organization_id: uuid.UUID, transcript_id: uuid.UUID
@@ -114,8 +142,10 @@ class AnalysisService:
         self, organization_id: uuid.UUID, run_id: uuid.UUID
     ) -> AnalysisRunResponse:
         cache_key = f"{organization_id}:{run_id}"
-        if cache_key in COMPLETED_RUNS_CACHE:
-            return COMPLETED_RUNS_CACHE[cache_key]
+        cached = COMPLETED_RUNS_CACHE.get(cache_key)
+        if cached is not None:
+            COMPLETED_RUNS_CACHE.move_to_end(cache_key)
+            return cached
 
         run = await self.transcript_repo.get_analysis_run(run_id, organization_id)
         if not run:
@@ -124,7 +154,7 @@ class AnalysisService:
             )
         resp = AnalysisRunResponse.model_validate(run)
         if run.status == "done":
-            COMPLETED_RUNS_CACHE[cache_key] = resp
+            _cache_completed_run(cache_key, resp)
         return resp
 
     async def list_analysis_runs(
@@ -213,9 +243,24 @@ class AnalysisService:
             created_by=user_id or transcript.created_by,
         )
 
-        # Launch non-blocking background task with independent DB session
-        import asyncio
-        asyncio.create_task(run_async_analysis_job(run.id, organization_id))
+        # Hand off to the worker. This previously used asyncio.create_task,
+        # which meant a redeploy, crash or unhandled exception left the run
+        # stuck in "pending" forever with nothing to retry it, and put no
+        # ceiling on how many provider calls could be in flight at once.
+        from app.workers.queue import ANALYZE_JOB, enqueue
+
+        await self.transcript_repo.session.commit()
+        try:
+            await enqueue(ANALYZE_JOB, str(run.id), str(organization_id))
+        except Exception as err:
+            logger.exception(f"Could not enqueue analysis run {run.id}: {err}")
+            await self.transcript_repo.mark_run_failed(
+                run.id, "Could not queue this evaluation. Please retry."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Analysis could not be queued right now. Please retry shortly.",
+            ) from err
 
         refreshed_run = await self.transcript_repo.get_analysis_run(run.id, organization_id)
         return AnalysisRunResponse.model_validate(refreshed_run or run)
@@ -248,7 +293,11 @@ class AnalysisService:
                 organization_id=str(organization_id),
             )
 
-            from app.repositories.llm_cost_repository import LLMCostRepository
+            from app.repositories.llm_cost_repository import (
+                LLMCostRepository,
+                _provider_from_base_url,
+            )
+            from app.core.config import settings
             cost_repo = LLMCostRepository(self.transcript_repo.session)
 
             prompt_tokens = outcome.token_usage.get("prompt_tokens", 0)
@@ -261,7 +310,7 @@ class AnalysisService:
                 analysis_run_id=run.id,
                 transcript_id=run.transcript_id,
                 action="scorecard_evaluation",
-                provider="mistral",
+                provider=_provider_from_base_url(settings.LLM_BASE_URL),
                 model_name=outcome.model_used,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -285,15 +334,19 @@ class AnalysisService:
         except Exception as exc:
             logger.exception(f"Error processing analysis run {run_id}: {exc}")
             try:
-                from app.repositories.llm_cost_repository import LLMCostRepository
+                from app.repositories.llm_cost_repository import (
+                    LLMCostRepository,
+                    _provider_from_base_url,
+                )
+                from app.core.config import settings
                 cost_repo = LLMCostRepository(self.transcript_repo.session)
                 await cost_repo.log_request(
                     organization_id=organization_id,
                     user_id=run.created_by,
                     analysis_run_id=run.id,
                     action="scorecard_evaluation",
-                    provider="mistral",
-                    model_name="ministral-3b-2512",
+                    provider=_provider_from_base_url(settings.LLM_BASE_URL),
+                    model_name=settings.LLM_MODEL_NAME,
                     prompt_tokens=0,
                     completion_tokens=0,
                     latency_ms=0,

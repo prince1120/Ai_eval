@@ -11,7 +11,6 @@ from app.api.deps import (
     get_current_user,
     require_role,
     get_analysis_service,
-    get_stt_service,
     get_storage_service,
 )
 from app.models.user import User
@@ -22,7 +21,8 @@ from app.schemas.transcript import (
     TriggerAnalysisRequest,
 )
 from app.services.analysis_service import AnalysisService
-from app.services.stt_service import STTService
+from app.workers.queue import TRANSCRIBE_JOB, enqueue
+from app.services.stt_service import sha256_digest
 from app.services.storage_service import MinIOStorageService
 
 logger = logging.getLogger(__name__)
@@ -48,19 +48,22 @@ async def create_transcript(
     )
 
 
-@router.post("/upload-audio", response_model=TranscriptResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/upload-audio", response_model=TranscriptResponse, status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit("20/minute")
 async def upload_and_transcribe_audio(
     request: Request,
     file: UploadFile = File(...),
     auto_analyze: bool = Query(False, description="Automatically run LLM evaluation after transcription"),
     current_user: User = Depends(require_role(["admin", "evaluator"])),
-    stt_service: STTService = Depends(get_stt_service),
     analysis_service: AnalysisService = Depends(get_analysis_service),
     storage_service: MinIOStorageService = Depends(get_storage_service),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Upload call audio file (.mp3, .wav, .m4a), transcribe with Whisper STT, store in MinIO, and create transcript."""
+    """Store a call recording and queue it for transcription.
+
+    Returns 202 with a transcript in the "queued" state; poll GET /transcripts/{id}
+    (or its status field) until it reaches "transcribed" or "transcription_failed".
+    """
     filename = file.filename or "uploaded_call.mp3"
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ".mp3"
     if extension not in ALLOWED_AUDIO_EXTENSIONS or (
@@ -78,84 +81,96 @@ async def upload_and_transcribe_audio(
             detail=f"Audio file exceeds the {MAX_AUDIO_UPLOAD_BYTES // (1024 * 1024)}MB limit.",
         )
 
-    stt_res = await stt_service.transcribe_audio(
-        file_bytes=file_bytes, filename=filename
+    # Re-uploading a file that was already transcribed burns STT quota and
+    # creates a duplicate call record, so short-circuit on a content match.
+    audio_sha256 = sha256_digest(file_bytes)
+    duplicate = await analysis_service.find_duplicate_audio(
+        organization_id=current_user.organization_id, audio_sha256=audio_sha256
     )
+    if duplicate:
+        logger.info(
+            f"Audio {audio_sha256[:12]} already transcribed as {duplicate.id}; "
+            "returning existing transcript instead of re-running STT"
+        )
+        return duplicate
 
-    # Store audio file in MinIO
+    # Store the recording BEFORE transcribing. Audio is the source of truth and
+    # everything downstream is re-computable from it; if STT fails we still
+    # want the file, and a storage outage must not silently discard it.
     audio_key = f"{current_user.organization_id}/{uuid.uuid4()}{extension}"
-    audio_file_key: Optional[str] = None
     try:
-        audio_file_key = await storage_service.upload_audio(
+        audio_file_key: Optional[str] = await storage_service.upload_audio(
             key=audio_key,
             file_bytes=file_bytes,
             content_type=file.content_type or "audio/mpeg",
         )
     except Exception as err:
-        logger.warning(f"MinIO audio upload failed: {err}")
+        logger.exception(f"Audio storage upload failed for {audio_key}: {err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not store the audio recording. Please retry in a moment.",
+        ) from err
 
-    transcript = await analysis_service.create_transcript(
+    # Create the row in a pending state and hand the work to the queue. The
+    # request returns immediately: transcription can take minutes, and on the
+    # free tier it may be deferred for an hour waiting on quota. Neither should
+    # be held open on an HTTP connection.
+    transcript = await analysis_service.create_pending_audio_transcript(
         organization_id=current_user.organization_id,
-        req=TranscriptCreate(
-            raw_text=stt_res["raw_text"],
-            source_call_id=file.filename,
-            speaker_segments={"diarized_text": stt_res["diarized_text"]},
-            audio_file_key=audio_file_key,
-            detected_language=stt_res.get("detected_language"),
-            audio_duration_seconds=stt_res.get("audio_duration_seconds"),
-        ),
+        source_call_id=file.filename,
+        audio_file_key=audio_file_key,
+        audio_sha256=audio_sha256,
         user_id=current_user.id,
     )
+    await db.commit()
 
-    # Record LLM Cost Logs for STT & Diarization
     try:
-        from app.repositories.llm_cost_repository import LLMCostRepository
-        cost_repo = LLMCostRepository(db)
+        await enqueue(
+            TRANSCRIBE_JOB,
+            str(transcript.id),
+            str(current_user.organization_id),
+            audio_file_key,
+            filename,
+            auto_analyze,
+        )
+    except Exception as err:
+        logger.exception(f"Could not enqueue transcription for {transcript.id}: {err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The recording was saved but transcription could not be queued. "
+                "Retry the analysis from the transcript page shortly."
+            ),
+        ) from err
 
-        # 1. Log Groq Whisper STT
-        stt_usage = stt_res.get("stt_usage", {})
-        await cost_repo.log_request(
-            organization_id=current_user.organization_id,
-            user_id=current_user.id,
-            transcript_id=transcript.id,
-            action="stt_whisper_transcription",
-            provider="groq",
-            model_name="whisper-large-v3-turbo",
-            prompt_tokens=0,
-            completion_tokens=0,
-            latency_ms=stt_res.get("stt_latency_ms", 0),
-            status="success",
-            override_total_cost_usd=stt_usage.get("estimated_cost_usd", 0),
+    return transcript
+
+
+@router.post("/{id}/retry-transcription", response_model=TranscriptResponse, status_code=status.HTTP_202_ACCEPTED)
+async def retry_transcription(
+    id: uuid.UUID,
+    auto_analyze: bool = Query(False),
+    current_user: User = Depends(require_role(["admin", "evaluator"])),
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+):
+    """Re-queue transcription for a recording whose job failed or was lost."""
+    transcript = await analysis_service.get_transcript(
+        organization_id=current_user.organization_id, transcript_id=id
+    )
+    if not transcript.audio_file_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This transcript has no stored audio to transcribe.",
         )
 
-        # 2. Log Mistral Diarization
-        diar_usage = stt_res.get("diarize_usage", {})
-        if diar_usage and diar_usage.get("total_tokens", 0) > 0:
-            await cost_repo.log_request(
-                organization_id=current_user.organization_id,
-                user_id=current_user.id,
-                transcript_id=transcript.id,
-                action="speaker_diarization",
-                provider="mistral",
-                model_name=settings.LLM_MODEL_NAME,
-                prompt_tokens=diar_usage.get("prompt_tokens", 0),
-                completion_tokens=diar_usage.get("completion_tokens", 0),
-                latency_ms=stt_res.get("diarize_latency_ms", 0),
-                status="success",
-            )
-    except Exception:
-        logger.exception(
-            f"Failed to record LLM cost logs for transcript {transcript.id}"
-        )
-
-    if auto_analyze:
-        await analysis_service.trigger_analysis(
-            organization_id=current_user.organization_id,
-            transcript_id=transcript.id,
-            req=TriggerAnalysisRequest(),
-            user_id=current_user.id,
-        )
-
+    await enqueue(
+        TRANSCRIBE_JOB,
+        str(transcript.id),
+        str(current_user.organization_id),
+        transcript.audio_file_key,
+        transcript.source_call_id or "recording.mp3",
+        auto_analyze,
+    )
     return transcript
 
 

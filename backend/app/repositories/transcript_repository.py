@@ -31,21 +31,60 @@ class TranscriptRepository:
         audio_file_key: Optional[str] = None,
         detected_language: Optional[str] = None,
         audio_duration_seconds: Optional[float] = None,
+        segments: Optional[List[Dict[str, Any]]] = None,
+        stt_confidence: Optional[float] = None,
+        stt_quality_flags: Optional[List[str]] = None,
+        stt_model: Optional[str] = None,
+        audio_sha256: Optional[str] = None,
+        status: str = "uploaded",
     ) -> Transcript:
         transcript = Transcript(
             organization_id=organization_id,
             raw_text=raw_text,
             source_call_id=source_call_id,
             speaker_segments=speaker_segments,
-            status="uploaded",
+            status=status,
             created_by=created_by,
             audio_file_key=audio_file_key,
             detected_language=detected_language,
             audio_duration_seconds=audio_duration_seconds,
+            segments=segments,
+            stt_confidence=stt_confidence,
+            stt_quality_flags=stt_quality_flags,
+            stt_model=stt_model,
+            audio_sha256=audio_sha256,
         )
         self.session.add(transcript)
         await self.session.flush()
         return transcript
+
+    async def find_by_audio_hash(
+        self, organization_id: uuid.UUID, audio_sha256: str
+    ) -> Optional[Transcript]:
+        """Return an existing transcript for the same audio within this org.
+
+        Used to skip re-transcribing a duplicate upload, which would otherwise
+        consume STT quota and produce a second copy of the same call.
+        """
+        result = await self.session.execute(
+            select(Transcript)
+            .options(selectinload(Transcript.creator))
+            .where(
+                Transcript.organization_id == organization_id,
+                Transcript.audio_sha256 == audio_sha256,
+                # Only a transcript that actually produced text is worth
+                # reusing. Matching a failed or still-queued row meant a
+                # re-upload of a recording whose first attempt failed silently
+                # returned that dead row instead of retrying it.
+                Transcript.raw_text != "",
+                Transcript.status.notin_(
+                    ["transcription_failed", "queued", "transcribing"]
+                ),
+            )
+            .order_by(Transcript.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_transcript(
         self, transcript_id: uuid.UUID, organization_id: uuid.UUID

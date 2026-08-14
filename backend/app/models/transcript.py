@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Any, Dict
-from sqlalchemy import String, Text, Integer, Float, UUID, ForeignKey, JSON, DateTime, UniqueConstraint
+from sqlalchemy import String, Text, Integer, Float, UUID, ForeignKey, JSON, DateTime, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -9,6 +9,11 @@ from app.models.base import Base, TimestampMixin
 
 class Transcript(Base, TimestampMixin):
     __tablename__ = "transcripts"
+    __table_args__ = (
+        # Dedup lookups are always scoped to one organization; a global unique
+        # constraint would leak the existence of another tenant's recording.
+        Index("idx_transcripts_org_audio_sha256", "organization_id", "audio_sha256"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -30,6 +35,21 @@ class Transcript(Base, TimestampMixin):
     detected_language: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     # Exact audio duration in seconds from Whisper verbose_json response
     audio_duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Timestamped Whisper segments with per-segment quality signals and speaker
+    # labels. Retained because they are what make evidence-by-timestamp, cheap
+    # re-diarization and talk-time analytics possible without re-running STT.
+    segments: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # Duration-weighted mean token probability (0-1) across speech segments.
+    stt_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # e.g. ["low_confidence", "possible_hallucination", "high_silence"]
+    stt_quality_flags: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # Which STT model produced this transcript — needed to compare accuracy
+    # across models on the golden set.
+    stt_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Content hash of the uploaded audio, used to skip re-transcribing a file
+    # that has already been processed for this organization.
+    audio_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Relationships
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
